@@ -33,7 +33,7 @@ cd "$INSTALL_DIR"
 
 # ── Dependencies & Build ──────────────────────────────────────────────────────
 echo "[prilog-agent] Installiere Dependencies..."
-npm ci --omit=dev
+npm install --omit=dev
 
 echo "[prilog-agent] Build..."
 npm run build

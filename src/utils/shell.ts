@@ -69,8 +69,8 @@ export function spawnLogStream(
     agent:   ['journalctl', ['-u', 'prilog-agent', '-f', '-n', '50']],
   } as any;
 
-  const [cmd, cmdArgs] = cmds[source] ?? cmds.synapse;
-  const child = spawn(cmd, cmdArgs);
+  const [cmd, cmdArgs] = cmds[source] as [string, string[]];
+  const child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   const handle = (data: Buffer) => {
     data.toString().split('\n').filter(Boolean).forEach(onLine);
