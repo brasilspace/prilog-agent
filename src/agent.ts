@@ -1,0 +1,197 @@
+import { config } from './config.js';
+import { AgentTransport } from './transport/websocket.js';
+import { collectMetrics } from './handlers/metrics.js';
+import { getModuleStatus, enableModule, disableModule } from './handlers/modules.js';
+import { executeCommand, spawnLogStream } from './utils/shell.js';
+import { ServerCommandPayload, LogChunkPayload } from './types.js';
+import { logger } from './utils/logger.js';
+
+export class PrilogAgent {
+  private transport: AgentTransport;
+  private metricsTimer: NodeJS.Timeout | null = null;
+  private logStreams = new Map<string, () => void>(); // streamId → stop fn
+
+  constructor() {
+    this.transport = new AgentTransport();
+    this.transport.onConnected    = () => this.onConnected();
+    this.transport.onDisconnected = () => this.onDisconnected();
+    this.transport.onCommand      = (cmd) => this.handleCommand(cmd);
+  }
+
+  // ─── Lifecycle ────────────────────────────────────────────────────────────────
+
+  start() {
+    logger.info(`🚀 Prilog Agent starting — subdomain: ${config.subdomain}`);
+    this.transport.connect();
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => this.shutdown('SIGTERM'));
+    process.on('SIGINT',  () => this.shutdown('SIGINT'));
+  }
+
+  private onConnected() {
+    this.startMetricsLoop();
+    // Initiale Modulübersicht senden
+    this.sendModuleStatus();
+  }
+
+  private onDisconnected() {
+    this.stopMetricsLoop();
+    // Log-Streams stoppen um Ressourcen zu sparen
+    this.stopAllLogStreams();
+  }
+
+  private shutdown(signal: string) {
+    logger.info(`Shutdown signal: ${signal}`);
+    this.stopMetricsLoop();
+    this.stopAllLogStreams();
+    this.transport.shutdown();
+    process.exit(0);
+  }
+
+  // ─── Metrics Loop ─────────────────────────────────────────────────────────────
+
+  private startMetricsLoop() {
+    this.stopMetricsLoop();
+    // Sofort einmal senden
+    this.pushMetrics();
+    this.metricsTimer = setInterval(() => this.pushMetrics(), config.metricsInterval);
+  }
+
+  private stopMetricsLoop() {
+    if (this.metricsTimer) {
+      clearInterval(this.metricsTimer);
+      this.metricsTimer = null;
+    }
+  }
+
+  private async pushMetrics() {
+    try {
+      const metrics = await collectMetrics();
+      this.transport.send('agent.metrics', metrics);
+    } catch (err) {
+      logger.error('Metrics collection failed', err);
+    }
+  }
+
+  private sendModuleStatus() {
+    try {
+      const modules = getModuleStatus();
+      this.transport.send('agent.module_status', { modules });
+    } catch (err) {
+      logger.error('Module status failed', err);
+    }
+  }
+
+  // ─── Command Handler ──────────────────────────────────────────────────────────
+
+  private async handleCommand(cmd: ServerCommandPayload) {
+    const { commandId, command, args } = cmd;
+    const start = Date.now();
+
+    logger.info(`Executing command: ${command}`, args);
+
+    try {
+      // ── Log Streaming ──────────────────────────────────────────────────────
+      if (command === 'logs.stream.start') {
+        const source = (args?.source as 'synapse' | 'nginx' | 'agent') ?? 'synapse';
+        const streamId = args?.streamId as string ?? commandId;
+
+        // Alten Stream stoppen falls vorhanden
+        this.stopLogStream(streamId);
+
+        const stopFn = spawnLogStream(
+          source,
+          (line) => {
+            const payload: LogChunkPayload = {
+              source,
+              streamId,
+              lines: [line],
+            };
+            this.transport.send('agent.log_chunk', payload);
+          },
+          () => {
+            logger.info(`Log stream ended: ${streamId}`);
+            this.logStreams.delete(streamId);
+          }
+        );
+
+        this.logStreams.set(streamId, stopFn);
+        this.transport.send('agent.command_result', {
+          commandId,
+          success: true,
+          output: `Log stream started: ${source}`,
+          duration: Date.now() - start,
+        });
+        return;
+      }
+
+      if (command === 'logs.stream.stop') {
+        const streamId = args?.streamId as string ?? commandId;
+        this.stopLogStream(streamId);
+        this.transport.send('agent.command_result', {
+          commandId,
+          success: true,
+          output: `Log stream stopped: ${streamId}`,
+          duration: Date.now() - start,
+        });
+        return;
+      }
+
+      // ── Module Commands ────────────────────────────────────────────────────
+      if (command === 'module.enable') {
+        const result = await enableModule(args?.module as string);
+        this.sendModuleStatus(); // Aktualisierter Status nach Änderung
+        this.transport.send('agent.command_result', { commandId, ...result, duration: Date.now() - start });
+        return;
+      }
+
+      if (command === 'module.disable') {
+        const result = await disableModule(args?.module as string);
+        this.sendModuleStatus();
+        this.transport.send('agent.command_result', { commandId, ...result, duration: Date.now() - start });
+        return;
+      }
+
+      if (command === 'module.status') {
+        this.sendModuleStatus();
+        this.transport.send('agent.command_result', {
+          commandId, success: true, output: 'Module status sent', duration: Date.now() - start,
+        });
+        return;
+      }
+
+      // ── Shell Commands (Whitelist) ─────────────────────────────────────────
+      const result = await executeCommand(command, args);
+      this.transport.send('agent.command_result', { commandId, ...result });
+
+    } catch (err: any) {
+      logger.error(`Command failed: ${command}`, err);
+      this.transport.send('agent.command_result', {
+        commandId,
+        success: false,
+        output: err?.message ?? 'Internal error',
+        duration: Date.now() - start,
+      });
+    }
+  }
+
+  // ─── Log Stream Management ────────────────────────────────────────────────────
+
+  private stopLogStream(streamId: string) {
+    const stop = this.logStreams.get(streamId);
+    if (stop) {
+      stop();
+      this.logStreams.delete(streamId);
+      logger.debug(`Stopped log stream: ${streamId}`);
+    }
+  }
+
+  private stopAllLogStreams() {
+    this.logStreams.forEach((stop, id) => {
+      stop();
+      logger.debug(`Stopped log stream on disconnect: ${id}`);
+    });
+    this.logStreams.clear();
+  }
+}

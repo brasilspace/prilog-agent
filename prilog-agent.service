@@ -1,0 +1,22 @@
+[Unit]
+Description=Prilog Agent — Remote management for Matrix Synapse
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/prilog-agent
+EnvironmentFile=/opt/prilog-agent/.env
+ExecStart=/usr/bin/node /opt/prilog-agent/dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prilog-agent
+
+# Limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
