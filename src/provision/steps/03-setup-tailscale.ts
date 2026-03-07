@@ -53,3 +53,9 @@ export async function stepSetupTailscale(cfg: ProvisionConfig): Promise<void> {
 
   logger.info('[Step 03] Tailscale verbunden');
 }
+
+export async function verifySetupTailscale(_cfg: ProvisionConfig): Promise<void> {
+  if (!isTailscaleConnected()) {
+    throw new Error('Tailscale nicht verbunden nach Setup (tailscale status zeigt nicht "Connected")');
+  }
+}

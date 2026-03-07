@@ -108,3 +108,10 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
     throw new Error(`Admin-User anlegen fehlgeschlagen: ${msg}`);
   }
 }
+
+export async function verifyCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
+  const exists = await adminUserExists(cfg);
+  if (!exists) {
+    throw new Error(`Admin-User "${cfg.adminUsername}" nicht in Synapse-DB vorhanden nach Erstellung`);
+  }
+}

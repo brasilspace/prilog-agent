@@ -10,7 +10,7 @@
  * Idempotenz: Prüft ob SSL-Config bereits aktiv.
  */
 
-import { exec }      from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import * as fs        from 'fs';
 import { ProvisionConfig } from '../types.js';
@@ -163,4 +163,22 @@ export async function stepConfigureNginxSsl(cfg: ProvisionConfig): Promise<void>
   // ── Nginx reloaden ────────────────────────────────────────────────
   await execAsync('systemctl reload nginx', { timeout: 15_000 });
   logger.info('[Step 6] Nginx mit SSL-Config reloaded ✅');
+}
+
+export async function verifyConfigureNginxSsl(cfg: ProvisionConfig): Promise<void> {
+  try {
+    execSync('nginx -t', { stdio: 'ignore', timeout: 10_000 });
+  } catch {
+    throw new Error('Nginx SSL-Konfiguration ungültig (nginx -t fehlgeschlagen)');
+  }
+  // HTTP-Erreichbarkeit prüfen
+  for (const domain of [cfg.matrixDomain, cfg.webappDomain]) {
+    try {
+      execSync(`curl -sf --max-time 10 https://${domain} -o /dev/null`, {
+        timeout: 15_000,
+      });
+    } catch {
+      throw new Error(`https://${domain} nicht erreichbar nach SSL-Konfiguration`);
+    }
+  }
 }

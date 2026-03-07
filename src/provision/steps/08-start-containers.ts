@@ -123,3 +123,16 @@ export async function stepStartContainers(_cfg: ProvisionConfig): Promise<void> 
   // ── Auf Synapse-Health warten ────────────────────────────────────
   await waitForSynapse();
 }
+
+export async function verifyStartContainers(_cfg: ProvisionConfig): Promise<void> {
+  const candidates = ['prilog-synapse-1', 'synapse'];
+  let healthy = false;
+  for (const name of candidates) {
+    if (getContainerHealth(name) === 'healthy') { healthy = true; break; }
+  }
+  if (!healthy) {
+    let debug = '';
+    try { debug = execSync('docker ps --format "{{.Names}}: {{.Status}}"', { timeout: 5_000 }).toString(); } catch {}
+    throw new Error(`Synapse nicht healthy nach Container-Start.\n${debug}`);
+  }
+}

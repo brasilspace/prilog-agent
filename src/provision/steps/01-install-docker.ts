@@ -56,3 +56,17 @@ export async function stepInstallDocker(_cfg: ProvisionConfig): Promise<void> {
 
   logger.info('[Step 01] Docker installiert und gestartet');
 }
+
+export async function verifyInstallDocker(_cfg: ProvisionConfig): Promise<void> {
+  try {
+    execSync('docker --version', { stdio: 'ignore' });
+    execSync('docker compose version', { stdio: 'ignore' });
+  } catch {
+    throw new Error('Docker oder Docker Compose nicht verfügbar nach Installation');
+  }
+  try {
+    execSync('systemctl is-active docker', { stdio: 'ignore' });
+  } catch {
+    throw new Error('Docker-Dienst läuft nicht (systemctl is-active docker fehlgeschlagen)');
+  }
+}

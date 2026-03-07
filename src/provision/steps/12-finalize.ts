@@ -9,7 +9,7 @@
  * Idempotenz: Mehrfaches Aufrufen ist sicher — Backend-Endpoint ist idempotent.
  */
 
-import { exec }      from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
@@ -45,5 +45,23 @@ export async function stepFinalize(cfg: ProvisionConfig): Promise<void> {
 
     // Trotzdem als Fehler werfen damit Admin sieht: "finalize fehlgeschlagen"
     throw new Error(`Ready-Callback fehlgeschlagen: ${msg}`);
+  }
+}
+
+export async function verifyFinalize(cfg: ProvisionConfig): Promise<void> {
+  // Prüfen ob Backend den Ready-Callback bestätigt hat (installationStatus === 'complete')
+  try {
+    const res = execSync(
+      `curl -sf --max-time 10 -H "Authorization: Bearer ${cfg.agentToken}" ` +
+      `${cfg.backendApiUrl}/api/agent/status`,
+      { timeout: 15_000 }
+    ).toString();
+    const data = JSON.parse(res);
+    if (data?.installationStatus !== 'complete') {
+      throw new Error(`Status nicht 'complete' — Backend meldet: ${data?.installationStatus}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('nicht')) throw err;
+    throw new Error(`Backend-Status-Check fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

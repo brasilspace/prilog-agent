@@ -44,3 +44,14 @@ export async function stepConfigureFirewall(_cfg: ProvisionConfig): Promise<void
 
   logger.info('[Step 02] Firewall konfiguriert und aktiviert');
 }
+
+export async function verifyConfigureFirewall(_cfg: ProvisionConfig): Promise<void> {
+  try {
+    const out = execSync('ufw status', { timeout: 5_000 }).toString();
+    if (!out.includes('Status: active')) {
+      throw new Error('UFW nicht aktiv');
+    }
+  } catch (err) {
+    throw new Error(`Firewall-Prüfung fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}

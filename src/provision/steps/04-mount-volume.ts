@@ -101,3 +101,14 @@ WantedBy=multi-user.target
 
   logger.info('[Step 04] Verzeichnisse und Autostart-Service eingerichtet');
 }
+
+export async function verifyMountVolume(_cfg: ProvisionConfig): Promise<void> {
+  if (!isVolumeMounted()) {
+    throw new Error('Volume nicht gemountet nach Setup (/opt/prilog nicht in mount-Ausgabe)');
+  }
+  try {
+    execSync('test -d /opt/prilog/data && test -d /opt/prilog/config', { stdio: 'ignore' });
+  } catch {
+    throw new Error('Verzeichnisse /opt/prilog/data oder /opt/prilog/config fehlen');
+  }
+}

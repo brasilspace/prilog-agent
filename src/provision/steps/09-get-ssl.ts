@@ -11,7 +11,7 @@
  *             Certbot --keep-until-expiring verhindert unnötige Neuausstellung.
  */
 
-import { exec }      from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import * as fs        from 'fs';
 import { ProvisionConfig } from '../types.js';
@@ -122,4 +122,16 @@ export async function stepGetSsl(cfg: ProvisionConfig): Promise<void> {
   }
 
   logger.info('[Step 5] Alle SSL-Zertifikate erhalten');
+}
+
+export async function verifyGetSsl(cfg: ProvisionConfig): Promise<void> {
+  const domains = [cfg.matrixDomain, cfg.webappDomain];
+  for (const domain of domains) {
+    try {
+      execSync(`test -f /etc/letsencrypt/live/${domain}/fullchain.pem`, { stdio: 'ignore' });
+      execSync(`test -f /etc/letsencrypt/live/${domain}/privkey.pem`, { stdio: 'ignore' });
+    } catch {
+      throw new Error(`SSL-Zertifikat für ${domain} fehlt nach Certbot`);
+    }
+  }
 }

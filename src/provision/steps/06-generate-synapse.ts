@@ -16,7 +16,7 @@
  * Idempotenz: Prüft ob homeserver.yaml bereits PostgreSQL-Config enthält.
  */
 
-import { exec }      from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import * as fs        from 'fs';
 import { ProvisionConfig } from '../types.js';
@@ -184,4 +184,17 @@ export async function stepGenerateSynapse(cfg: ProvisionConfig): Promise<void> {
   // ── Dateirechte setzen (Synapse läuft als UID 991) ─────────────
   await execAsync(`chown -R 991:991 ${SYNAPSE_DATA_DIR}`, { timeout: 15_000 });
   logger.info('[Step 2] Dateirechte gesetzt');
+}
+
+export async function verifyGenerateSynapse(_cfg: ProvisionConfig): Promise<void> {
+  try {
+    execSync('test -f /opt/prilog/config/homeserver.yaml', { stdio: 'ignore' });
+  } catch {
+    throw new Error('homeserver.yaml fehlt nach Synapse-Generate');
+  }
+  try {
+    execSync('test -f /opt/prilog/config/signing.key', { stdio: 'ignore' });
+  } catch {
+    throw new Error('signing.key fehlt nach Synapse-Generate');
+  }
 }

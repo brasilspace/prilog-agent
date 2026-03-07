@@ -103,3 +103,19 @@ export async function stepInstallNginx(cfg: ProvisionConfig): Promise<void> {
     logger.info('[Step 1] Nginx gestartet');
   }
 }
+
+export async function verifyInstallNginx(_cfg: ProvisionConfig): Promise<void> {
+  if (!isNginxInstalled()) {
+    throw new Error('Nginx nicht installiert');
+  }
+  try {
+    execSync('nginx -t', { stdio: 'ignore', timeout: 10_000 });
+  } catch {
+    throw new Error('Nginx Konfiguration ungültig (nginx -t fehlgeschlagen)');
+  }
+  try {
+    execSync('systemctl is-active nginx', { stdio: 'ignore' });
+  } catch {
+    throw new Error('Nginx-Dienst läuft nicht');
+  }
+}
