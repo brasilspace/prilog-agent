@@ -16,11 +16,17 @@ const execAsync = promisify(exec);
 
 function isVolumeMounted(): boolean {
   try {
-    const out = execSync('mountpoint -q /mnt/prilog-data && echo yes', { encoding: 'utf-8' });
-    return out.trim() === 'yes';
+    execSync('mountpoint -q /mnt/prilog-data', { stdio: 'ignore' });
+    return true;
   } catch {
     return false;
   }
+}
+
+function getMountUnitName(): string {
+  // systemd-escape ermittelt den korrekten Unit-Namen für /mnt/prilog-data
+  // Ergebnis: mnt-prilog\x2ddata.mount (mit literal \x2d für den Bindestrich)
+  return execSync('systemd-escape --suffix=mount --path /mnt/prilog-data', { encoding: 'utf-8' }).trim();
 }
 
 function buildMountUnit(cfg: ProvisionConfig): string {
@@ -45,15 +51,15 @@ export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
   } else {
     logger.info('[Step 04] Schreibe systemd Mount-Unit...');
 
-    // Bindestriche in systemd Unit-Namen müssen als \x2d escaped werden
-    const unitName = 'mnt-prilog\\x2ddata.mount';
+    const unitName = getMountUnitName();
     const unitPath = `/etc/systemd/system/${unitName}`;
 
+    logger.info(`[Step 04] Unit-Name: ${unitName}`);
     fs.writeFileSync(unitPath, buildMountUnit(cfg), 'utf-8');
 
     await execAsync('systemctl daemon-reload', { timeout: 15_000 });
-    await execAsync('systemctl enable mnt-prilog\\x2ddata.mount', { timeout: 10_000 });
-    await execAsync('systemctl start mnt-prilog\\x2ddata.mount', { timeout: 30_000 });
+    await execAsync(`systemctl enable ${unitName}`, { timeout: 10_000 });
+    await execAsync(`systemctl start ${unitName}`, { timeout: 30_000 });
 
     logger.info('[Step 04] Volume gemountet');
   }
@@ -78,10 +84,11 @@ export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
   }
 
   // ── Docker Compose Autostart nach Reboot ─────────────────────────
+  const mountUnit = getMountUnitName();
   const composeService = `[Unit]
 Description=Prilog Docker Compose
-Requires=docker.service mnt-prilog\\x2ddata.mount
-After=docker.service mnt-prilog\\x2ddata.mount
+Requires=docker.service ${mountUnit}
+After=docker.service ${mountUnit}
 
 [Service]
 Type=oneshot
@@ -104,11 +111,13 @@ WantedBy=multi-user.target
 
 export async function verifyMountVolume(_cfg: ProvisionConfig): Promise<void> {
   if (!isVolumeMounted()) {
-    throw new Error('Volume nicht gemountet nach Setup (/opt/prilog nicht in mount-Ausgabe)');
+    throw new Error('Volume nicht gemountet nach Setup (mountpoint -q fehlgeschlagen)');
   }
-  try {
-    execSync('test -d /opt/prilog/data && test -d /opt/prilog/config', { stdio: 'ignore' });
-  } catch {
-    throw new Error('Verzeichnisse /opt/prilog/data oder /opt/prilog/config fehlen');
+  for (const dir of ['/mnt/prilog-data/postgres', '/mnt/prilog-data/synapse']) {
+    try {
+      execSync(`test -d ${dir}`, { stdio: 'ignore' });
+    } catch {
+      throw new Error(`Verzeichnis ${dir} fehlt nach Volume-Mount`);
+    }
   }
 }
