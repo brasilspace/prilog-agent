@@ -7,7 +7,7 @@ const execAsync = promisify(exec);
 // ─── Whitelist ────────────────────────────────────────────────────────────────
 // Nur diese Befehle dürfen ausgeführt werden. Kein arbitrary shell exec.
 
-const COMMAND_MAP: Record<CommandName, (args?: Record<string, string | number | boolean>) => string> = {
+const COMMAND_MAP: Partial<Record<CommandName, (args?: Record<string, string | number | boolean>) => string>> = {
   'synapse.restart':      () => 'docker compose -f /opt/synapse/docker-compose.yml restart synapse',
   'synapse.reload':       () => 'docker compose -f /opt/synapse/docker-compose.yml kill -s HUP synapse',
   'synapse.status':       () => 'docker compose -f /opt/synapse/docker-compose.yml ps synapse',
