@@ -2,6 +2,7 @@
  * provision/runner.ts
  *
  * Orchestriert alle 12 Provisioning-Steps sequenziell.
+ * Nach jedem Step wird verify() aufgerufen — schlägt er fehl, stoppt der Runner.
  */
 
 import {
@@ -15,34 +16,34 @@ import { logger } from '../utils/logger.js';
 
 // ─── Steps importieren ────────────────────────────────────────────────────────
 
-import { stepInstallDocker }      from './steps/01-install-docker.js';
-import { stepConfigureFirewall }  from './steps/02-configure-firewall.js';
-import { stepSetupTailscale }     from './steps/03-setup-tailscale.js';
-import { stepMountVolume }        from './steps/04-mount-volume.js';
-import { stepInstallNginx }       from './steps/05-install-nginx.js';
-import { stepGenerateSynapse }    from './steps/06-generate-synapse.js';
-import { stepWriteCompose }       from './steps/07-write-compose.js';
-import { stepStartContainers }    from './steps/08-start-containers.js';
-import { stepGetSsl }             from './steps/09-get-ssl.js';
-import { stepConfigureNginxSsl }  from './steps/10-configure-nginx-ssl.js';
-import { stepCreateAdminUser }    from './steps/11-create-admin-user.js';
-import { stepFinalize }           from './steps/12-finalize.js';
+import { stepInstallDocker,     verifyInstallDocker     } from './steps/01-install-docker.js';
+import { stepConfigureFirewall, verifyConfigureFirewall } from './steps/02-configure-firewall.js';
+import { stepSetupTailscale,    verifySetupTailscale    } from './steps/03-setup-tailscale.js';
+import { stepMountVolume,       verifyMountVolume       } from './steps/04-mount-volume.js';
+import { stepInstallNginx,      verifyInstallNginx      } from './steps/05-install-nginx.js';
+import { stepGenerateSynapse,   verifyGenerateSynapse   } from './steps/06-generate-synapse.js';
+import { stepWriteCompose,      verifyWriteCompose      } from './steps/07-write-compose.js';
+import { stepStartContainers,   verifyStartContainers   } from './steps/08-start-containers.js';
+import { stepGetSsl,            verifyGetSsl            } from './steps/09-get-ssl.js';
+import { stepConfigureNginxSsl, verifyConfigureNginxSsl } from './steps/10-configure-nginx-ssl.js';
+import { stepCreateAdminUser,   verifyCreateAdminUser   } from './steps/11-create-admin-user.js';
+import { stepFinalize,          verifyFinalize          } from './steps/12-finalize.js';
 
 // ─── Step Registry ────────────────────────────────────────────────────────────
 
 const STEPS: StepDefinition[] = [
-  { name: 'install_docker',      fn: stepInstallDocker     },
-  { name: 'configure_firewall',  fn: stepConfigureFirewall },
-  { name: 'setup_tailscale',     fn: stepSetupTailscale    },
-  { name: 'mount_volume',        fn: stepMountVolume       },
-  { name: 'install_nginx',       fn: stepInstallNginx      },
-  { name: 'generate_synapse',    fn: stepGenerateSynapse   },
-  { name: 'write_compose',       fn: stepWriteCompose      },
-  { name: 'start_containers',    fn: stepStartContainers   },
-  { name: 'get_ssl',             fn: stepGetSsl            },
-  { name: 'configure_nginx_ssl', fn: stepConfigureNginxSsl },
-  { name: 'create_admin_user',   fn: stepCreateAdminUser   },
-  { name: 'finalize',            fn: stepFinalize          },
+  { name: 'install_docker',      fn: stepInstallDocker,      verify: verifyInstallDocker      },
+  { name: 'configure_firewall',  fn: stepConfigureFirewall,  verify: verifyConfigureFirewall  },
+  { name: 'setup_tailscale',     fn: stepSetupTailscale,     verify: verifySetupTailscale     },
+  { name: 'mount_volume',        fn: stepMountVolume,        verify: verifyMountVolume        },
+  { name: 'install_nginx',       fn: stepInstallNginx,       verify: verifyInstallNginx       },
+  { name: 'generate_synapse',    fn: stepGenerateSynapse,    verify: verifyGenerateSynapse    },
+  { name: 'write_compose',       fn: stepWriteCompose,       verify: verifyWriteCompose       },
+  { name: 'start_containers',    fn: stepStartContainers,    verify: verifyStartContainers    },
+  { name: 'get_ssl',             fn: stepGetSsl,             verify: verifyGetSsl             },
+  { name: 'configure_nginx_ssl', fn: stepConfigureNginxSsl,  verify: verifyConfigureNginxSsl  },
+  { name: 'create_admin_user',   fn: stepCreateAdminUser,    verify: verifyCreateAdminUser    },
+  { name: 'finalize',            fn: stepFinalize,           verify: verifyFinalize           },
 ];
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ export async function runProvision(
     (startFromStep ? ` (ab Step: ${startFromStep})` : ''));
 
   for (let i = 0; i < STEPS.length; i++) {
-    const { name, fn } = STEPS[i];
+    const { name, fn, verify } = STEPS[i];
 
     if (i < startIndex) {
       logger.info(`[Provision] Überspringe ${name}`);
@@ -78,11 +79,17 @@ export async function runProvision(
     report(name, 'running');
 
     try {
+      // ── Step ausführen ───────────────────────────────────────────
       await fn(config);
+      logger.info(`[Provision] ✅ ${name} ausgeführt — verifiziere...`);
+
+      // ── Verifizieren ─────────────────────────────────────────────
+      await verify(config);
+
       const duration = Date.now() - stepStart;
       report(name, 'success');
       results.push({ step: name, status: 'success', duration });
-      logger.info(`[Provision] ✅ ${name} (${duration}ms)`);
+      logger.info(`[Provision] ✅ ${name} verifiziert (${duration}ms)`);
 
     } catch (err: unknown) {
       const duration = Date.now() - stepStart;
@@ -90,7 +97,7 @@ export async function runProvision(
       report(name, 'error', message);
       results.push({ step: name, status: 'error', message, duration });
       logger.error(`[Provision] ❌ ${name} (${duration}ms): ${message}`);
-      break;
+      break; // Kein nächster Step
     }
   }
 
