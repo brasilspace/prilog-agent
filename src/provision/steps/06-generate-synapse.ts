@@ -60,7 +60,7 @@ function patchHomserverYaml(content: string, cfg: ProvisionConfig): string {
     user: synapse
     password: ${cfg.dbPassword}
     database: synapse
-    host: localhost
+    host: ${cfg.dbHost}
     port: 5432
     cp_min: 5
     cp_max: 10
