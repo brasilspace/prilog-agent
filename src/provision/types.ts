@@ -27,6 +27,7 @@ export interface ProvisionConfig {
   matrixDomain:       string;
   webappDomain:       string;
   tailscaleAuthKey:   string;
+  hetznerVolumeId:    string;
   dbPassword:         string;
   registrationSecret: string;
   macaroonSecret:     string;
