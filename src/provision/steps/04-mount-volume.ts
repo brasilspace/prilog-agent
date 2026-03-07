@@ -58,8 +58,8 @@ export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
     fs.writeFileSync(unitPath, buildMountUnit(cfg), 'utf-8');
 
     await execAsync('systemctl daemon-reload', { timeout: 15_000 });
-    await execAsync(`systemctl enable ${unitName}`, { timeout: 10_000 });
-    await execAsync(`systemctl start ${unitName}`, { timeout: 30_000 });
+    await execAsync(`systemctl enable '${unitName}'`, { timeout: 10_000 });
+    await execAsync(`systemctl start '${unitName}'`, { timeout: 30_000 });
 
     logger.info('[Step 04] Volume gemountet');
   }
