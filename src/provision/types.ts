@@ -1,14 +1,12 @@
 /**
  * provision/types.ts
- *
- * Typdefinitionen für das Agent-based Provisioning System.
- * Der Agent empfängt einen ProvisionCommand vom Backend und führt
- * die Steps sequenziell aus — mit Status-Reporting nach jedem Step.
  */
 
-// ─── Step Names ───────────────────────────────────────────────────────────────
-
 export const STEP_NAMES = [
+  'install_docker',
+  'configure_firewall',
+  'setup_tailscale',
+  'mount_volume',
   'install_nginx',
   'generate_synapse',
   'write_compose',
@@ -23,50 +21,40 @@ export type StepName = typeof STEP_NAMES[number];
 
 export type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped';
 
-// ─── Provision Config (vom Backend gesendet) ──────────────────────────────────
-
 export interface ProvisionConfig {
   orderId:            string;
   subdomain:          string;
-  matrixDomain:       string;   // z.B. "schule.prilog.team"
-  webappDomain:       string;   // z.B. "schule.prilog.chat"
+  matrixDomain:       string;
+  webappDomain:       string;
+  tailscaleAuthKey:   string;   // für setup_tailscale Step
   dbPassword:         string;
   registrationSecret: string;
   macaroonSecret:     string;
   formSecret:         string;
   adminUsername:      string;
-  adminPassword:      string;   // Klartext — nur beim Setup, wird danach gelöscht
-  maxUploadSize:      number;   // MB, z.B. 50
-  backendApiUrl:      string;   // z.B. "https://api.prilog.chat"
-  agentToken:         string;   // Bearer Token für Ready-Callback
+  adminPassword:      string;
+  maxUploadSize:      number;
+  backendApiUrl:      string;
+  agentToken:         string;
 }
-
-// ─── Step Result ──────────────────────────────────────────────────────────────
 
 export interface StepResult {
   step:     StepName;
   status:   'success' | 'error' | 'skipped';
   message?: string;
-  duration: number;  // Millisekunden
+  duration: number;
 }
-
-// ─── Provision Command (Backend → Agent) ─────────────────────────────────────
 
 export interface ProvisionCommand {
-  config:          ProvisionConfig;
-  startFromStep?:  StepName;  // Für Retry: ab welchem Step starten?
+  config:         ProvisionConfig;
+  startFromStep?: StepName;
 }
-
-// ─── Reporter Function ────────────────────────────────────────────────────────
-// Wird vom Runner aufgerufen — sendet Status ans Backend via WebSocket.
 
 export type ReportFn = (
   step:     StepName,
   status:   'running' | 'success' | 'error',
   message?: string,
 ) => void;
-
-// ─── Step Function ────────────────────────────────────────────────────────────
 
 export type StepFn = (config: ProvisionConfig) => Promise<void>;
 
