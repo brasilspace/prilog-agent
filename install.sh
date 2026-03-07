@@ -34,11 +34,13 @@ cd "$INSTALL_DIR"
 # ── Dependencies & Build ──────────────────────────────────────────────────────
 echo "[prilog-agent] Installiere Dependencies..."
 npm install
-npm run build
-npm prune --omit=dev
 
 echo "[prilog-agent] Build..."
 npm run build
+
+echo "[prilog-agent] DevDependencies entfernen..."
+npm prune --omit=dev
+
 
 # ── .env aus /etc/prilog/agent.env verlinken ──────────────────────────────────
 if [ -f "$ENV_SOURCE" ]; then
