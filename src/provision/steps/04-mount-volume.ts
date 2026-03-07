@@ -1,7 +1,8 @@
 /**
  * provision/steps/04-mount-volume.ts
  *
- * Hetzner Volume mounten via fstab — kein systemd Unit, kein \x2d Problem.
+ * Hetzner Volume mounten via fstab.
+ * Device: /dev/disk/by-id/scsi-0HC_Volume_<hetznerVolumeId>
  */
 
 import { execSync }  from 'child_process';
@@ -25,14 +26,14 @@ function isVolumeMounted(): boolean {
 }
 
 export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
-  const device = `/dev/disk/by-id/scsi-0HC_Volume_${cfg.subdomain}`;
+  // Device-Pfad mit numerischer Hetzner Volume ID
+  const device = `/dev/disk/by-id/scsi-0HC_Volume_${cfg.hetznerVolumeId}`;
 
   if (isVolumeMounted()) {
     logger.info('[Step 04] Volume bereits gemountet — überspringe');
   } else {
-    logger.info(`[Step 04] Mounte Volume ${device} → ${MOUNT_POINT}`);
+    logger.info(`[Step 04] Mounte ${device} → ${MOUNT_POINT}`);
 
-    // Verzeichnis anlegen
     fs.mkdirSync(MOUNT_POINT, { recursive: true });
 
     // fstab Eintrag (idempotent)
@@ -43,7 +44,6 @@ export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
       logger.info('[Step 04] fstab Eintrag hinzugefügt');
     }
 
-    // Mounten
     await execAsync(`mount -o discard,defaults ${device} ${MOUNT_POINT}`, { timeout: 30_000 });
     logger.info('[Step 04] Volume gemountet');
   }
