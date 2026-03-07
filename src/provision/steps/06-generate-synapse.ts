@@ -188,12 +188,12 @@ export async function stepGenerateSynapse(cfg: ProvisionConfig): Promise<void> {
 
 export async function verifyGenerateSynapse(_cfg: ProvisionConfig): Promise<void> {
   try {
-    execSync('test -f /opt/prilog/config/homeserver.yaml', { stdio: 'ignore' });
+    execSync(`test -f ${HOMESERVER_YAML}`, { stdio: 'ignore' });
   } catch {
     throw new Error('homeserver.yaml fehlt nach Synapse-Generate');
   }
   try {
-    execSync('test -f /opt/prilog/config/signing.key', { stdio: 'ignore' });
+    execSync(`test -f ${SYNAPSE_DATA_DIR}/signing.key`, { stdio: 'ignore' });
   } catch {
     throw new Error('signing.key fehlt nach Synapse-Generate');
   }
