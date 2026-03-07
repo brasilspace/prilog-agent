@@ -9,6 +9,7 @@ export type MessageType =
   | 'agent.log_chunk'
   | 'agent.command_result'
   | 'agent.module_status'
+  | 'agent.heal_events'
 
   // Backend → Agent
   | 'server.command'

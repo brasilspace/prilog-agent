@@ -22,6 +22,7 @@ export const config = {
   // Intervals (ms)
   metricsInterval: parseInt(process.env.METRICS_INTERVAL || '30000'),
   heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || '15000'),
+  healerInterval: parseInt(process.env.HEALER_INTERVAL || '60000'),
 
   // Reconnect
   reconnectBaseMs: 2000,
