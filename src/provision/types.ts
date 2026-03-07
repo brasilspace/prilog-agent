@@ -26,7 +26,7 @@ export interface ProvisionConfig {
   subdomain:          string;
   matrixDomain:       string;
   webappDomain:       string;
-  tailscaleAuthKey:   string;   // für setup_tailscale Step
+  tailscaleAuthKey:   string;
   dbPassword:         string;
   registrationSecret: string;
   macaroonSecret:     string;
@@ -56,9 +56,11 @@ export type ReportFn = (
   message?: string,
 ) => void;
 
-export type StepFn = (config: ProvisionConfig) => Promise<void>;
+export type StepFn   = (config: ProvisionConfig) => Promise<void>;
+export type VerifyFn = (config: ProvisionConfig) => Promise<void>;
 
 export interface StepDefinition {
-  name: StepName;
-  fn:   StepFn;
+  name:   StepName;
+  fn:     StepFn;
+  verify: VerifyFn;  // Wird nach fn() aufgerufen — wirft Error wenn fehlgeschlagen
 }
