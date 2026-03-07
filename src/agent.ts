@@ -4,6 +4,7 @@ import { collectMetrics } from './handlers/metrics.js';
 import { getModuleStatus, enableModule, disableModule } from './handlers/modules.js';
 import { executeCommand, spawnLogStream } from './utils/shell.js';
 import { runHealthCheck, HealEvent } from './handlers/healer.js';
+import { handleProvisionCommand } from './handlers/provision.js';
 import { ServerCommandPayload, LogChunkPayload } from './types.js';
 import { logger } from './utils/logger.js';
 
@@ -11,7 +12,10 @@ export class PrilogAgent {
   private transport: AgentTransport;
   private metricsTimer: NodeJS.Timeout | null = null;
   private healerTimer: NodeJS.Timeout | null = null;
-  private logStreams = new Map<string, () => void>(); // streamId → stop fn
+  private logStreams = new Map<string, () => void>();
+
+  // Verhindert parallele Provision-Läufe
+  private provisionRunning = false;
 
   constructor() {
     this.transport = new AgentTransport();
@@ -26,7 +30,6 @@ export class PrilogAgent {
     logger.info(`🚀 Prilog Agent starting — subdomain: ${config.subdomain}`);
     this.transport.connect();
 
-    // Graceful shutdown
     process.on('SIGTERM', () => this.shutdown('SIGTERM'));
     process.on('SIGINT',  () => this.shutdown('SIGINT'));
   }
@@ -56,7 +59,6 @@ export class PrilogAgent {
 
   private startMetricsLoop() {
     this.stopMetricsLoop();
-    // Sofort einmal senden
     this.pushMetrics();
     this.metricsTimer = setInterval(() => this.pushMetrics(), config.metricsInterval);
   }
@@ -77,11 +79,10 @@ export class PrilogAgent {
     }
   }
 
-  // ─── Healer Loop ──────────────────────────────────────────────────────────
+  // ─── Healer Loop ──────────────────────────────────────────────────────────────
 
   private startHealerLoop() {
     this.stopHealerLoop();
-    // Erster Check nach 30s (Server braucht kurz zum Hochfahren)
     setTimeout(() => {
       this.runHealer();
       this.healerTimer = setInterval(() => this.runHealer(), config.healerInterval);
@@ -96,6 +97,9 @@ export class PrilogAgent {
   }
 
   private async runHealer() {
+    // Während Provisioning läuft: Healer deaktivieren (verhindert Konflikte)
+    if (this.provisionRunning) return;
+
     try {
       const events = await runHealthCheck();
       if (events.length > 0) {
@@ -125,22 +129,43 @@ export class PrilogAgent {
     logger.info(`Executing command: ${command}`, args);
 
     try {
+      // ── Provisioning ───────────────────────────────────────────────────────
+      if (command === 'provision') {
+        if (this.provisionRunning) {
+          this.transport.send('agent.command_result', {
+            commandId,
+            success: false,
+            output: 'Provisioning läuft bereits — bitte warten',
+            duration: Date.now() - start,
+          });
+          return;
+        }
+
+        this.provisionRunning = true;
+
+        // Async starten — nicht awaiten damit WebSocket nicht blockiert wird
+        handleProvisionCommand(
+          commandId,
+          args as Record<string, unknown> ?? {},
+          (type, payload) => this.transport.send(type as any, payload)
+        ).finally(() => {
+          this.provisionRunning = false;
+        });
+
+        return;
+      }
+
       // ── Log Streaming ──────────────────────────────────────────────────────
       if (command === 'logs.stream.start') {
         const source = (args?.source as 'synapse' | 'nginx' | 'agent') ?? 'synapse';
         const streamId = args?.streamId as string ?? commandId;
 
-        // Alten Stream stoppen falls vorhanden
         this.stopLogStream(streamId);
 
         const stopFn = spawnLogStream(
           source,
           (line) => {
-            const payload: LogChunkPayload = {
-              source,
-              streamId,
-              lines: [line],
-            };
+            const payload: LogChunkPayload = { source, streamId, lines: [line] };
             this.transport.send('agent.log_chunk', payload);
           },
           () => {
@@ -174,7 +199,7 @@ export class PrilogAgent {
       // ── Module Commands ────────────────────────────────────────────────────
       if (command === 'module.enable') {
         const result = await enableModule(args?.module as string);
-        this.sendModuleStatus(); // Aktualisierter Status nach Änderung
+        this.sendModuleStatus();
         this.transport.send('agent.command_result', { commandId, ...result, duration: Date.now() - start });
         return;
       }
@@ -195,7 +220,7 @@ export class PrilogAgent {
       }
 
       // ── Shell Commands (Whitelist) ─────────────────────────────────────────
-      const result = await executeCommand(command, args);
+      const result = await executeCommand(command, args as Record<string, string | number | boolean> | undefined);
       this.transport.send('agent.command_result', { commandId, ...result });
 
     } catch (err: any) {

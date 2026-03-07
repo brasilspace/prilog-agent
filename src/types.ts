@@ -10,6 +10,7 @@ export type MessageType =
   | 'agent.command_result'
   | 'agent.module_status'
   | 'agent.heal_events'
+  | 'agent.provision_step'    // Step-Status während Provisioning
 
   // Backend → Agent
   | 'server.command'
@@ -17,39 +18,39 @@ export type MessageType =
 
 export interface AgentMessage {
   type: MessageType;
-  id:   string;   // nanoid — für Command-Korrelation
-  ts:   number;   // Unix timestamp ms
+  id:   string;
+  ts:   number;
   payload: unknown;
 }
 
 // ─── Payloads Agent → Backend ─────────────────────────────────────────────────
 
 export interface HelloPayload {
-  subdomain:   string;
+  subdomain:    string;
   agentVersion: string;
-  hostname:    string;
-  uptime:      number;
+  hostname:     string;
+  uptime:       number;
 }
 
 export interface MetricsPayload {
-  cpu:         number;   // %
-  ram:         number;   // % used
-  ramTotal:    number;   // MB
-  ramUsed:     number;   // MB
-  disk:        number;   // % used
-  diskTotal:   number;   // GB
-  diskUsed:    number;   // GB
-  volumeUsage: number;   // % (Synapse data volume)
-  matrixUsers: number;   // Synapse user count
-  synapseUp:   boolean;
-  loadAvg:     [number, number, number];
+  cpu:          number;
+  ram:          number;
+  ramTotal:     number;
+  ramUsed:      number;
+  disk:         number;
+  diskTotal:    number;
+  diskUsed:     number;
+  volumeUsage:  number;
+  matrixUsers:  number;
+  synapseUp:    boolean;
+  loadAvg:      [number, number, number];
   uptimeSeconds: number;
 }
 
 export interface LogChunkPayload {
-  source:  string;   // 'synapse' | 'nginx' | 'agent'
-  lines:   string[];
-  streamId: string;  // Korreliert mit stream request
+  source:   string;
+  lines:    string[];
+  streamId: string;
 }
 
 export interface CommandResultPayload {
@@ -57,7 +58,7 @@ export interface CommandResultPayload {
   success:   boolean;
   output?:   string;
   error?:    string;
-  duration:  number; // ms
+  duration:  number;
 }
 
 export interface ModuleStatusPayload {
@@ -65,11 +66,20 @@ export interface ModuleStatusPayload {
 }
 
 export interface ModuleInfo {
-  name:      string;
-  enabled:   boolean;
-  running:   boolean;
-  version?:  string;
-  error?:    string;
+  name:     string;
+  enabled:  boolean;
+  running:  boolean;
+  version?: string;
+  error?:   string;
+}
+
+// ─── Provision Step Payload (Agent → Backend) ─────────────────────────────────
+
+export interface ProvisionStepPayload {
+  orderId:  string;
+  step:     string;
+  status:   'running' | 'success' | 'error';
+  message?: string;
 }
 
 // ─── Payloads Backend → Agent ─────────────────────────────────────────────────
@@ -88,10 +98,11 @@ export type CommandName =
   | 'system.status'
   | 'system.df'
   | 'agent.update'
-  | 'agent.version';
+  | 'agent.version'
+  | 'provision';
 
 export interface ServerCommandPayload {
   commandId: string;
   command:   CommandName;
-  args?:     Record<string, string | number | boolean>;
+  args?:     Record<string, unknown>;
 }
