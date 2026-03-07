@@ -192,9 +192,8 @@ export async function verifyGenerateSynapse(_cfg: ProvisionConfig): Promise<void
   } catch {
     throw new Error('homeserver.yaml fehlt nach Synapse-Generate');
   }
-  try {
-    execSync(`test -f ${SYNAPSE_DATA_DIR}/signing.key`, { stdio: 'ignore' });
-  } catch {
+  const keys = fs.readdirSync(SYNAPSE_DATA_DIR).filter(f => f.endsWith('.signing.key'));
+  if (keys.length === 0) {
     throw new Error('signing.key fehlt nach Synapse-Generate');
   }
 }
