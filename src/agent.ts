@@ -3,12 +3,14 @@ import { AgentTransport } from './transport/websocket.js';
 import { collectMetrics } from './handlers/metrics.js';
 import { getModuleStatus, enableModule, disableModule } from './handlers/modules.js';
 import { executeCommand, spawnLogStream } from './utils/shell.js';
+import { runHealthCheck, HealEvent } from './handlers/healer.js';
 import { ServerCommandPayload, LogChunkPayload } from './types.js';
 import { logger } from './utils/logger.js';
 
 export class PrilogAgent {
   private transport: AgentTransport;
   private metricsTimer: NodeJS.Timeout | null = null;
+  private healerTimer: NodeJS.Timeout | null = null;
   private logStreams = new Map<string, () => void>(); // streamId → stop fn
 
   constructor() {
@@ -31,19 +33,20 @@ export class PrilogAgent {
 
   private onConnected() {
     this.startMetricsLoop();
-    // Initiale Modulübersicht senden
+    this.startHealerLoop();
     this.sendModuleStatus();
   }
 
   private onDisconnected() {
     this.stopMetricsLoop();
-    // Log-Streams stoppen um Ressourcen zu sparen
+    this.stopHealerLoop();
     this.stopAllLogStreams();
   }
 
   private shutdown(signal: string) {
     logger.info(`Shutdown signal: ${signal}`);
     this.stopMetricsLoop();
+    this.stopHealerLoop();
     this.stopAllLogStreams();
     this.transport.shutdown();
     process.exit(0);
@@ -71,6 +74,36 @@ export class PrilogAgent {
       this.transport.send('agent.metrics', metrics);
     } catch (err) {
       logger.error('Metrics collection failed', err);
+    }
+  }
+
+  // ─── Healer Loop ──────────────────────────────────────────────────────────
+
+  private startHealerLoop() {
+    this.stopHealerLoop();
+    // Erster Check nach 30s (Server braucht kurz zum Hochfahren)
+    setTimeout(() => {
+      this.runHealer();
+      this.healerTimer = setInterval(() => this.runHealer(), config.healerInterval);
+    }, 30_000);
+  }
+
+  private stopHealerLoop() {
+    if (this.healerTimer) {
+      clearInterval(this.healerTimer);
+      this.healerTimer = null;
+    }
+  }
+
+  private async runHealer() {
+    try {
+      const events = await runHealthCheck();
+      if (events.length > 0) {
+        logger.info(`Healer: ${events.length} Event(s)`, events.map(e => e.type));
+        this.transport.send('agent.heal_events', { events });
+      }
+    } catch (err) {
+      logger.error('Healer failed', err);
     }
   }
 
