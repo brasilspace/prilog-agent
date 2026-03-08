@@ -43,17 +43,14 @@ function getSynapseContainerName(): string {
 
 async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
   try {
-    // Synapse Admin API: User-Info abrufen
-    // Funktioniert nur wenn Synapse läuft und ein Admin-Token existiert
-    // Bei Erstinstallation schlägt das fehl → user existiert noch nicht
+    // Direkt in der Synapse-Postgres-DB prüfen — zuverlässiger als API
+    const containerName = getSynapseContainerName();
     const { stdout } = await execAsync(
-      `curl -sf http://localhost:8008/_synapse/admin/v1/username_available?username=${cfg.adminUsername}`,
+      `docker exec ${containerName} /bin/sh -c "psql -U synapse -d synapse -tAc \"SELECT COUNT(*) FROM users WHERE name = '@${cfg.adminUsername}:${cfg.matrixDomain}'\""`,
       { timeout: 10_000 }
     );
-    // {"available": false} → User existiert
-    return stdout.includes('"available":false') || stdout.includes('"available": false');
+    return parseInt(stdout.trim(), 10) > 0;
   } catch {
-    // API nicht erreichbar oder anderer Fehler → annehmen dass User noch nicht existiert
     return false;
   }
 }
