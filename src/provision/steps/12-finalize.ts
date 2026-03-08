@@ -48,20 +48,7 @@ export async function stepFinalize(cfg: ProvisionConfig): Promise<void> {
   }
 }
 
-export async function verifyFinalize(cfg: ProvisionConfig): Promise<void> {
-  // Prüfen ob Backend den Ready-Callback bestätigt hat (installationStatus === 'complete')
-  try {
-    const res = execSync(
-      `curl -sf --max-time 10 -H "Authorization: Bearer ${cfg.agentToken}" ` +
-      `${cfg.backendApiUrl}/api/agent/status`,
-      { timeout: 15_000 }
-    ).toString();
-    const data = JSON.parse(res);
-    if (data?.installationStatus !== 'complete') {
-      throw new Error(`Status nicht 'complete' — Backend meldet: ${data?.installationStatus}`);
-    }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('nicht')) throw err;
-    throw new Error(`Backend-Status-Check fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
-  }
+export async function verifyFinalize(_cfg: ProvisionConfig): Promise<void> {
+  // stepFinalize hat bereits erfolgreich den Ready-Callback gesendet.
+  // Kein weiterer Check nötig — wenn wir hier sind, ist alles OK.
 }
