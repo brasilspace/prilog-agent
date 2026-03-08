@@ -43,12 +43,13 @@ function getSynapseContainerName(): string {
 
 async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
   try {
-    // Direkt in der Synapse-Postgres-DB prüfen — zuverlässiger als API
+    // username_available gibt 400 zurück wenn User bereits existiert
     const { stdout } = await execAsync(
-      `docker exec prilog-postgres-1 psql -U synapse -d synapse -tAc "SELECT COUNT(*) FROM users WHERE name = '@${cfg.adminUsername}:${cfg.matrixDomain}'"`,
+      `curl -s -o /dev/null -w "%{http_code}" "http://localhost:8008/_synapse/admin/v1/username_available?username=${cfg.adminUsername}"`,
       { timeout: 10_000 }
     );
-    return parseInt(stdout.trim(), 10) > 0;
+    // 200 = verfügbar (existiert nicht), 400 = bereits vergeben (existiert)
+    return stdout.trim() === '400';
   } catch {
     return false;
   }
@@ -93,7 +94,7 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
       logger.info(`[Step 7] register_new_matrix_user Output: ${output}`);
     }
   } catch (err: any) {
-    const msg = err?.stderr || err?.message || String(err);
+    const msg = (err?.stdout || '') + (err?.stderr || '') + (err?.message || '') || String(err);
 
     // "already in use" ist kein echter Fehler
     if (msg.includes('already in use') || msg.includes('already exists') || msg.includes('already taken')) {
