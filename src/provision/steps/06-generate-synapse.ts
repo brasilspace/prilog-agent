@@ -29,11 +29,12 @@ const HOMESERVER_YAML   = `${SYNAPSE_DATA_DIR}/homeserver.yaml`;
 
 // ─── Idempotenz-Check ─────────────────────────────────────────────────────────
 
-function isSynapseAlreadyConfigured(): boolean {
+function isSynapseAlreadyConfigured(cfg: ProvisionConfig): boolean {
   try {
     const content = fs.readFileSync(HOMESERVER_YAML, 'utf-8');
-    // Wenn PostgreSQL bereits drin ist, wurde dieser Step schon ausgeführt
-    return content.includes('psycopg2') || content.includes('postgresql');
+    // PostgreSQL konfiguriert UND mit dem korrekten dbHost
+    return (content.includes('psycopg2') || content.includes('postgresql'))
+      && content.includes(`host: ${cfg.dbHost}`);
   } catch {
     return false;
   }
@@ -142,7 +143,7 @@ function patchHomserverYaml(content: string, cfg: ProvisionConfig): string {
 
 export async function stepGenerateSynapse(cfg: ProvisionConfig): Promise<void> {
   // ── Idempotenz ────────────────────────────────────────────────────
-  if (isSynapseAlreadyConfigured()) {
+  if (isSynapseAlreadyConfigured(cfg)) {
     logger.info('[Step 2] homeserver.yaml bereits konfiguriert — überspringe generate');
     return;
   }
