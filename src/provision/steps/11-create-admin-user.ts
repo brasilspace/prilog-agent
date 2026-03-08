@@ -96,7 +96,7 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
     const msg = err?.stderr || err?.message || String(err);
 
     // "already in use" ist kein echter Fehler
-    if (msg.includes('already in use') || msg.includes('already exists')) {
+    if (msg.includes('already in use') || msg.includes('already exists') || msg.includes('already taken')) {
       logger.info(`[Step 7] Admin-User @${cfg.adminUsername} existiert bereits (OK)`);
       return;
     }
