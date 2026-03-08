@@ -43,13 +43,12 @@ function getSynapseContainerName(): string {
 
 async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
   try {
-    // username_available gibt 400 zurück wenn User bereits existiert
+    // Direkt im lokalen Postgres-Container prüfen
     const { stdout } = await execAsync(
-      `curl -s -o /dev/null -w "%{http_code}" "http://localhost:8008/_synapse/admin/v1/username_available?username=${cfg.adminUsername}"`,
+      `docker exec prilog-postgres-1 psql -U synapse -d synapse -tAc "SELECT COUNT(*) FROM users WHERE name = '@${cfg.adminUsername}:${cfg.matrixDomain}'"`,
       { timeout: 10_000 }
     );
-    // 200 = verfügbar (existiert nicht), 400 = bereits vergeben (existiert)
-    return stdout.trim() === '400';
+    return parseInt(stdout.trim(), 10) > 0;
   } catch {
     return false;
   }
