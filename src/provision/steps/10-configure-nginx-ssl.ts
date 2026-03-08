@@ -171,14 +171,13 @@ export async function verifyConfigureNginxSsl(cfg: ProvisionConfig): Promise<voi
   } catch {
     throw new Error('Nginx SSL-Konfiguration ungültig (nginx -t fehlgeschlagen)');
   }
-  // HTTP-Erreichbarkeit prüfen
+  // HTTPS-Erreichbarkeit prüfen — jede Antwort (auch 3xx/4xx) ist OK
   for (const domain of [cfg.matrixDomain, cfg.webappDomain]) {
     try {
-      execSync(`curl -sf --max-time 10 https://${domain} -o /dev/null`, {
-        timeout: 15_000,
-      });
-    } catch {
-      throw new Error(`https://${domain} nicht erreichbar nach SSL-Konfiguration`);
+      const code = execSync(`curl -s --max-time 10 -o /dev/null -w "%{http_code}" https://${domain}`, { timeout: 15_000 }).toString().trim();
+      if (!code || code === '000') throw new Error('Keine Verbindung');
+    } catch (e: any) {
+      throw new Error(`https://${domain} nicht erreichbar nach SSL-Konfiguration: ${e.message}`);
     }
   }
 }
