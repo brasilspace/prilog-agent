@@ -51,7 +51,7 @@ services:
       - /mnt/prilog-data/synapse:/data
     ports:
       - "127.0.0.1:8008:8008"
-      - "8448:8448"
+
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8008/_matrix/client/versions || exit 1"]
       interval: 15s
