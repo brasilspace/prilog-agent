@@ -28,6 +28,7 @@ export interface ProvisionConfig {
   webappDomain:       string;
   tailscaleAuthKey:   string;
   hetznerVolumeId:    string;
+  dbHost:             string;
   dbPassword:         string;
   registrationSecret: string;
   macaroonSecret:     string;
