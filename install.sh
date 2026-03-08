@@ -61,7 +61,7 @@ fi
 cp "$INSTALL_DIR/prilog-agent.service" "$SERVICE_FILE"
 systemctl daemon-reload
 systemctl enable prilog-agent
-systemctl start prilog-agent
+systemctl restart prilog-agent
 
 echo "[prilog-agent] ✅ Installation abgeschlossen"
 echo "[prilog-agent] Status: $(systemctl is-active prilog-agent)"
