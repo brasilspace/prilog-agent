@@ -44,9 +44,8 @@ function getSynapseContainerName(): string {
 async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
   try {
     // Direkt in der Synapse-Postgres-DB prüfen — zuverlässiger als API
-    const containerName = getSynapseContainerName();
     const { stdout } = await execAsync(
-      `docker exec ${containerName} /bin/sh -c "psql -U synapse -d synapse -tAc \"SELECT COUNT(*) FROM users WHERE name = '@${cfg.adminUsername}:${cfg.matrixDomain}'\""`,
+      `docker exec prilog-postgres-1 psql -U synapse -d synapse -tAc "SELECT COUNT(*) FROM users WHERE name = '@${cfg.adminUsername}:${cfg.matrixDomain}'"`,
       { timeout: 10_000 }
     );
     return parseInt(stdout.trim(), 10) > 0;
