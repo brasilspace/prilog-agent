@@ -2,17 +2,9 @@
  * provision/steps/07-create-admin-user.ts
  *
  * Step 7: Matrix Admin-User über die Synapse Shared Secret API anlegen.
- *
- * Synapse bietet zwei Wege:
- *  a) register_new_matrix_user CLI (im Container)
- *  b) Shared Secret API mit HMAC-SHA1 Signatur
- *
- * Wir nutzen Option (a) — sicherer, kein externer HTTP-Aufruf nötig,
- * und funktioniert auch wenn Port 8008 noch nicht von außen erreichbar ist.
- *
- * Idempotenz: Prüft ob Admin-User bereits existiert via Synapse Admin API.
- *             docker exec register_new_matrix_user gibt Fehler wenn User existiert,
- *             wir fangen das ab.
+ * Nach dem Anlegen wird ein Synapse access_token via Login geholt
+ * und in cfg.synapseAdminToken gespeichert — der finalize-Step
+ * sendet ihn ans Backend zur Speicherung in der DB.
  */
 
 import { exec }      from 'child_process';
@@ -43,7 +35,6 @@ function getSynapseContainerName(): string {
 
 async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
   try {
-    // Direkt im lokalen Postgres-Container prüfen
     const { stdout } = await execAsync(
       `docker exec prilog-postgres-1 psql -U synapse -d synapse -tAc "SELECT COUNT(*) FROM users WHERE name = '@${cfg.adminUsername}:${cfg.matrixDomain}'"`,
       { timeout: 10_000 }
@@ -52,6 +43,27 @@ async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ─── Synapse Admin-Token via Matrix Login holen ───────────────────────────────
+
+export async function getSynapseAdminToken(cfg: ProvisionConfig): Promise<string> {
+  const loginPayload = JSON.stringify({
+    type: 'm.login.password',
+    identifier: { type: 'm.id.user', user: cfg.adminUsername },
+    password: cfg.adminPassword,
+  });
+
+  const { stdout } = await execAsync(
+    `curl -sf -X POST http://localhost:8008/_matrix/client/v3/login -H "Content-Type: application/json" -d '${loginPayload}' --max-time 15`,
+    { timeout: 20_000 }
+  );
+
+  const response = JSON.parse(stdout.trim());
+  if (!response.access_token) {
+    throw new Error(`Synapse Login fehlgeschlagen: ${JSON.stringify(response)}`);
+  }
+  return response.access_token;
 }
 
 // ─── Step ─────────────────────────────────────────────────────────────────────
@@ -68,7 +80,6 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
   logger.info(`[Step 7] Erstelle Admin-User @${cfg.adminUsername} via ${containerName}...`);
 
   // ── register_new_matrix_user ausführen ────────────────────────────
-  // Flags: -u Username, -p Passwort, -a Admin, -c homeserver.yaml
   const cmd = [
     `docker exec ${containerName}`,
     'register_new_matrix_user',
@@ -83,11 +94,9 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
     const { stdout, stderr } = await execAsync(cmd, { timeout: 30_000 });
     const output = (stdout + stderr).trim();
 
-    // Erfolgsmeldung enthält "Success!"
     if (output.includes('Success') || output.includes('success')) {
       logger.info(`[Step 7] Admin-User @${cfg.adminUsername} erstellt ✅`);
     } else if (output.includes('already exists') || output.includes('already in use')) {
-      // User existiert bereits — kein Fehler
       logger.info(`[Step 7] Admin-User @${cfg.adminUsername} existiert bereits (OK)`);
     } else {
       logger.info(`[Step 7] register_new_matrix_user Output: ${output}`);
@@ -95,13 +104,23 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
   } catch (err: any) {
     const msg = (err?.stdout || '') + (err?.stderr || '') + (err?.message || '') || String(err);
 
-    // "already in use" ist kein echter Fehler
     if (msg.includes('already in use') || msg.includes('already exists') || msg.includes('already taken')) {
       logger.info(`[Step 7] Admin-User @${cfg.adminUsername} existiert bereits (OK)`);
       return;
     }
 
     throw new Error(`Admin-User anlegen fehlgeschlagen: ${msg}`);
+  }
+
+  // ── Admin-Token holen und in cfg speichern ────────────────────────
+  logger.info('[Step 7] Hole Synapse Admin-Token...');
+  try {
+    const token = await getSynapseAdminToken(cfg);
+    (cfg as any).synapseAdminToken = token;
+    logger.info('[Step 7] Synapse Admin-Token erhalten ✅');
+  } catch (err: any) {
+    // Nicht fatal — finalize-Step sendet was vorhanden ist
+    logger.warn(`[Step 7] Synapse Admin-Token konnte nicht geholt werden: ${err.message}`);
   }
 }
 

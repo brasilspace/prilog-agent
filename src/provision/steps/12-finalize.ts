@@ -3,13 +3,11 @@
  *
  * Step 8: Finalisierung — Backend über abgeschlossenes Provisioning informieren.
  *
- * Ruft POST /api/agent/ready auf → Backend setzt installationStatus = 'complete'
- * und verschickt die "Server bereit" E-Mail an den Kunden.
- *
- * Idempotenz: Mehrfaches Aufrufen ist sicher — Backend-Endpoint ist idempotent.
+ * Sendet POST /api/agent/ready → Backend setzt installationStatus = 'complete',
+ * speichert den synapseAdminToken und verschickt die "Server bereit" E-Mail.
  */
 
-import { exec, execSync } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
@@ -20,7 +18,11 @@ export async function stepFinalize(cfg: ProvisionConfig): Promise<void> {
   logger.info('[Step 8] Sende Ready-Callback ans Backend...');
 
   const url  = `${cfg.backendApiUrl}/api/agent/ready`;
-  const body = JSON.stringify({ status: 'ready', orderId: cfg.orderId });
+  const body = JSON.stringify({
+    status: 'ready',
+    orderId: cfg.orderId,
+    synapseAdminToken: (cfg as any).synapseAdminToken ?? null,
+  });
 
   const curlCmd = [
     'curl -sf -X POST',
@@ -38,17 +40,12 @@ export async function stepFinalize(cfg: ProvisionConfig): Promise<void> {
     logger.info(`[Step 8] Backend Antwort: ${stdout.trim()}`);
     logger.info('[Step 8] ✅ Provisioning abgeschlossen — Server ist bereit!');
   } catch (err: any) {
-    // Callback-Fehler ist nicht fatal — Server läuft trotzdem.
-    // Admin kann manuell den Status setzen.
     const msg = err?.stderr || err?.message || String(err);
     logger.warn(`[Step 8] Ready-Callback fehlgeschlagen (nicht fatal): ${msg}`);
-
-    // Trotzdem als Fehler werfen damit Admin sieht: "finalize fehlgeschlagen"
     throw new Error(`Ready-Callback fehlgeschlagen: ${msg}`);
   }
 }
 
 export async function verifyFinalize(_cfg: ProvisionConfig): Promise<void> {
-  // stepFinalize hat bereits erfolgreich den Ready-Callback gesendet.
-  // Kein weiterer Check nötig — wenn wir hier sind, ist alles OK.
+  // Kein weiterer Check nötig
 }
