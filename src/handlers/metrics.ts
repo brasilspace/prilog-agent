@@ -41,17 +41,21 @@ function getRamMetrics(): { ramTotal: number; ramUsed: number; ramPct: number } 
 // ─── Disk ─────────────────────────────────────────────────────────────────────
 
 function getDiskMetrics(): { diskTotal: number; diskUsed: number; diskPct: number } {
-  try {
-    const out = execSync("df -k /opt/synapse/data --output=size,used,pcent | tail -1").toString().trim();
-    const [sizeKb, usedKb, pctStr] = out.split(/\s+/);
-    return {
-      diskTotal: Math.round(parseInt(sizeKb) / 1024 / 1024),
-      diskUsed:  Math.round(parseInt(usedKb) / 1024 / 1024),
-      diskPct:   parseInt(pctStr),
-    };
-  } catch {
-    return { diskTotal: 0, diskUsed: 0, diskPct: 0 };
+  const paths = ['/opt/synapse/data', '/mnt/synapse-data', '/'];
+  for (const p of paths) {
+    try {
+      const out = execSync(`df -k ${p} --output=size,used,pcent | tail -1`).toString().trim();
+      const [sizeKb, usedKb, pctStr] = out.split(/\s+/);
+      return {
+        diskTotal: Math.round(parseInt(sizeKb) / 1024 / 1024),
+        diskUsed:  Math.round(parseInt(usedKb) / 1024 / 1024),
+        diskPct:   parseInt(pctStr),
+      };
+    } catch {
+      continue;
+    }
   }
+  return { diskTotal: 0, diskUsed: 0, diskPct: 0 };
 }
 
 // ─── Synapse User Count ───────────────────────────────────────────────────────
@@ -72,18 +76,16 @@ async function getSynapseMetrics(): Promise<{ userCount: number; up: boolean }> 
 // ─── Volume Usage ─────────────────────────────────────────────────────────────
 
 function getVolumeUsage(): number {
-  try {
-    const out = execSync("df -k /mnt/synapse-data --output=pcent | tail -1").toString().trim();
-    return parseInt(out);
-  } catch {
-    // Fallback: /opt/synapse/data
+  const paths = ['/mnt/synapse-data', '/opt/synapse/data', '/'];
+  for (const p of paths) {
     try {
-      const out = execSync("df -k /opt/synapse/data --output=pcent | tail -1").toString().trim();
+      const out = execSync(`df -k ${p} --output=pcent | tail -1`).toString().trim();
       return parseInt(out);
     } catch {
-      return 0;
+      continue;
     }
   }
+  return 0;
 }
 
 // ─── Public ───────────────────────────────────────────────────────────────────
