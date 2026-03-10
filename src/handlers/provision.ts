@@ -51,7 +51,7 @@ export async function handleProvisionCommand(
   // Pflichtfelder prüfen
   const required: (keyof ProvisionConfig)[] = [
     'orderId', 'subdomain', 'matrixDomain', 'webappDomain',
-    'dbPassword', 'registrationSecret', 'adminUsername', 'adminPassword',
+    'dbPassword', 'registrationSecret', 'adminUsername', 'adminPasswordB64',
     'backendApiUrl', 'agentToken',
   ];
 
