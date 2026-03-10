@@ -48,15 +48,17 @@ async function adminUserExists(cfg: ProvisionConfig): Promise<boolean> {
 // ─── Synapse Admin-Token via Matrix Login holen ───────────────────────────────
 
 export async function getSynapseAdminToken(cfg: ProvisionConfig): Promise<string> {
+  const adminPasswordDecoded = Buffer.from(cfg.adminPasswordB64, 'base64').toString('utf8');
+
   const loginPayload = JSON.stringify({
     type: 'm.login.password',
     identifier: { type: 'm.id.user', user: cfg.adminUsername },
-    password: cfg.adminPassword,
+    password: adminPasswordDecoded,
   });
 
   const { stdout } = await execAsync(
-    `curl -sf -X POST http://localhost:8008/_matrix/client/v3/login -H "Content-Type: application/json" -d '${loginPayload}' --max-time 15`,
-    { timeout: 20_000 }
+    `curl -sf -X POST http://localhost:8008/_matrix/client/v3/login -H "Content-Type: application/json" -d "$LOGIN_PAYLOAD" --max-time 15`,
+    { timeout: 20_000, env: { ...process.env, LOGIN_PAYLOAD: loginPayload } }
   );
 
   const response = JSON.parse(stdout.trim());
@@ -80,18 +82,14 @@ export async function stepCreateAdminUser(cfg: ProvisionConfig): Promise<void> {
   logger.info(`[Step 7] Erstelle Admin-User @${cfg.adminUsername} via ${containerName}...`);
 
   // ── register_new_matrix_user ausführen ────────────────────────────
-  const cmd = [
-    `docker exec ${containerName}`,
-    'register_new_matrix_user',
-    `-u ${cfg.adminUsername}`,
-    `-p ${cfg.adminPassword}`,
-    '-a',
-    '-c /data/homeserver.yaml',
-    'http://localhost:8008',
-  ].join(' ');
+  // Passwort aus Base64 dekodieren und als Env-Variable übergeben — 100% shell-sicher
+  const adminPasswordDecoded = Buffer.from(cfg.adminPasswordB64, 'base64').toString('utf8');
 
   try {
-    const { stdout, stderr } = await execAsync(cmd, { timeout: 30_000 });
+    const { stdout, stderr } = await execAsync(
+      `docker exec ${containerName} register_new_matrix_user -u ${cfg.adminUsername} -p "$ADMIN_PW" -a -c /data/homeserver.yaml http://localhost:8008`,
+      { timeout: 30_000, env: { ...process.env, ADMIN_PW: adminPasswordDecoded } }
+    );
     const output = (stdout + stderr).trim();
 
     if (output.includes('Success') || output.includes('success')) {
