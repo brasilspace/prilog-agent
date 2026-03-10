@@ -34,7 +34,7 @@ export interface ProvisionConfig {
   macaroonSecret:     string;
   formSecret:         string;
   adminUsername:      string;
-  adminPassword:      string;
+  adminPasswordB64:   string;  // Base64-kodiert — vor Shell-Aufruf dekodieren!
   maxUploadSize:      number;
   backendApiUrl:      string;
   agentToken:         string;
