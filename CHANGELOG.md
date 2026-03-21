@@ -2,6 +2,10 @@
 
 ## 2026-03-21
 
+### Synapse Port-Bindung fuer Runtime-Zugriff
+- Der Agent veroeffentlicht Synapse jetzt standardmaessig nicht mehr nur auf `127.0.0.1:8008`, sondern konfigurierbar ueber `synapseBindAddress`.
+- Ohne explizite Vorgabe wird `8008` auf allen Interfaces publiziert, damit `api.prilog.chat` und Tailscale-/Runtime-Zugriffe den Homeserver erreichen koennen.
+
 ### Connector-Artefakt Download
 - Der Agent kann den `Prilog Matrix Connector` jetzt auch als Tarball von der Prilog-Infrastruktur laden und entpacken.
 - Wenn `packageUrl` vorhanden ist, wird zuerst dieser Weg genutzt; Git bleibt nur noch Fallback.

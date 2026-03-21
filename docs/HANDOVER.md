@@ -49,3 +49,9 @@ beides erfolgreich.
 4. Wenn Artefakt-Auslieferung aktiv ist:
    - pruefen, ob `packageUrl` verwendet wird
    - und kein GitHub-Zugang auf dem Kundenserver noetig ist
+
+## Update 2026-03-21 - Synapse Runtime-Port
+
+- `docker-compose.yml` publiziert Synapse nicht mehr hart nur auf `127.0.0.1:8008`.
+- Neue Provision-Configs koennen `synapseBindAddress` setzen; ohne Vorgabe wird `8008` auf allen Interfaces veroeffentlicht.
+- Das ist wichtig fuer den zentralen Zugriff von `api.prilog.chat` auf Kundenserver ueber Hostname/Tailscale.

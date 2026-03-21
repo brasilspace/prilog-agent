@@ -7,6 +7,11 @@ export const COMPOSE_PATH = `${COMPOSE_DIR}/docker-compose.yml`;
 export const CONNECTOR_HOST_DIR = '/opt/synapse/connectors/prilog-matrix-connector';
 export const CONNECTOR_CONTAINER_DIR = '/modules/prilog-matrix-connector';
 
+function buildSynapsePortBinding(cfg: ProvisionConfig): string {
+  const bindAddress = (cfg.synapseBindAddress || '0.0.0.0').trim();
+  return bindAddress === '0.0.0.0' ? '8008:8008' : `${bindAddress}:8008:8008`;
+}
+
 function buildSynapseEnvironment(cfg: ProvisionConfig): string[] {
   const environment = [
     `      SYNAPSE_SERVER_NAME: ${cfg.matrixDomain}`,
@@ -33,6 +38,7 @@ function buildSynapseVolumes(cfg: ProvisionConfig): string[] {
 export function buildComposeContent(cfg: ProvisionConfig): string {
   const synapseEnvironment = buildSynapseEnvironment(cfg).join('\n');
   const synapseVolumes = buildSynapseVolumes(cfg).join('\n');
+  const synapsePortBinding = buildSynapsePortBinding(cfg);
 
   return `version: '3.8'
 
@@ -65,7 +71,7 @@ ${synapseEnvironment}
     volumes:
 ${synapseVolumes}
     ports:
-      - "127.0.0.1:8008:8008"
+      - "${synapsePortBinding}"
 
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8008/_matrix/client/versions || exit 1"]

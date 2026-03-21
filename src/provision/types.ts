@@ -71,6 +71,7 @@ export interface ProvisionConfig {
   subdomain:          string;
   matrixDomain:       string;
   webappDomain:       string;
+  synapseBindAddress?: string;
   tailscaleAuthKey:   string;
   hetznerVolumeId:    string;
   dbHost:             string;
