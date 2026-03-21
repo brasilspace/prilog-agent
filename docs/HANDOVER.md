@@ -18,6 +18,8 @@ Der Agent hat jetzt eine idempotente Installroutine fuer den `Prilog Matrix Conn
   - im Compose-File in den Synapse-Container gemountet.
 - Neuer Agent-Command:
   - `connector.install`
+- Der Connector-Checkout nutzt jetzt standardmaessig den privaten SSH-Repo-Pfad `git@github.com:brasilspace/prilog-matrix-connector.git`.
+- Kundenserver brauchen dafuer einen GitHub-Deploy-Key oder SSH-Zugang fuer root bzw. den laufenden Agent-Prozess.
 
 ## Wichtige Pfade auf dem Zielserver
 

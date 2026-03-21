@@ -2,6 +2,10 @@
 
 ## 2026-03-21
 
+### Connector Repo via SSH
+- Der Agent zieht den `Prilog Matrix Connector` jetzt standardmaessig ueber `git@github.com:brasilspace/prilog-matrix-connector.git`.
+- Fehlt auf dem Kundenserver ein GitHub-Deploy-Key oder SSH-Zugang, liefert der Agent jetzt eine klare SSH-bezogene Fehlermeldung statt des anonymen HTTPS-Clone-Fehlers.
+
 ### Matrix Connector Installroutine
 - Idempotente Installroutine fuer den `Prilog Matrix Connector` hinzugefuegt.
 - Dieselbe Kernroutine wird jetzt fuer Neu-Provisionierung und Nachinstallation auf Bestandsservern verwendet.

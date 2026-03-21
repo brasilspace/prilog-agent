@@ -8,7 +8,7 @@ import { ProvisionConfig } from './types.js';
 import { COMPOSE_PATH, CONNECTOR_HOST_DIR, writeComposeFile } from './compose.js';
 
 const HOMESERVER_YAML = '/mnt/prilog-data/synapse/homeserver.yaml';
-const CONNECTOR_PACKAGE_REPO = 'https://github.com/brasilspace/prilog-matrix-connector';
+const CONNECTOR_PACKAGE_REPO = 'git@github.com:brasilspace/prilog-matrix-connector.git';
 const CONNECTOR_MODULE_NAME = 'prilog_matrix_connector';
 const CONNECTOR_MODULE_CLASS = 'prilog_matrix_connector.module.PrilogMatrixConnectorModule';
 
@@ -29,9 +29,20 @@ function execChecked(command: string, timeout = 60_000): string {
 }
 
 function ensureGitCheckout(repo: string, ref: string): void {
+  const isGithubSshRepo = repo.startsWith('git@github.com:');
+
   if (!fs.existsSync(CONNECTOR_HOST_DIR)) {
     fs.mkdirSync('/opt/synapse/connectors', { recursive: true });
-    execChecked(`git clone --depth 1 --branch ${ref} ${repo} ${CONNECTOR_HOST_DIR}`, 120_000);
+    try {
+      execChecked(`git clone --depth 1 --branch ${ref} ${repo} ${CONNECTOR_HOST_DIR}`, 120_000);
+    } catch (error) {
+      if (isGithubSshRepo) {
+        throw new Error(
+          `Connector-Repository konnte nicht per SSH geklont werden. Bitte Deploy-Key oder SSH-Zugang fuer ${repo} auf diesem Kundenserver hinterlegen.`,
+        );
+      }
+      throw error;
+    }
     return;
   }
 
@@ -39,7 +50,16 @@ function ensureGitCheckout(repo: string, ref: string): void {
     throw new Error(`Connector-Ziel existiert ohne Git-Metadaten: ${CONNECTOR_HOST_DIR}`);
   }
 
-  execChecked(`git -C ${CONNECTOR_HOST_DIR} fetch origin ${ref} --depth 1`, 120_000);
+  try {
+    execChecked(`git -C ${CONNECTOR_HOST_DIR} fetch origin ${ref} --depth 1`, 120_000);
+  } catch (error) {
+    if (isGithubSshRepo) {
+      throw new Error(
+        `Connector-Repository konnte nicht per SSH aktualisiert werden. Bitte Deploy-Key oder SSH-Zugang fuer ${repo} auf diesem Kundenserver pruefen.`,
+      );
+    }
+    throw error;
+  }
   execChecked(`git -C ${CONNECTOR_HOST_DIR} checkout ${ref}`);
   execChecked(`git -C ${CONNECTOR_HOST_DIR} reset --hard origin/${ref}`);
 }
