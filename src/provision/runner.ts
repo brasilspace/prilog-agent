@@ -22,6 +22,7 @@ import { stepSetupTailscale,    verifySetupTailscale    } from './steps/03-setup
 import { stepMountVolume,       verifyMountVolume       } from './steps/04-mount-volume.js';
 import { stepInstallNginx,      verifyInstallNginx      } from './steps/05-install-nginx.js';
 import { stepGenerateSynapse,   verifyGenerateSynapse   } from './steps/06-generate-synapse.js';
+import { stepInstallMatrixConnector, verifyInstallMatrixConnector } from './steps/06b-install-matrix-connector.js';
 import { stepWriteCompose,      verifyWriteCompose      } from './steps/07-write-compose.js';
 import { stepStartContainers,   verifyStartContainers   } from './steps/08-start-containers.js';
 import { stepGetSsl,            verifyGetSsl            } from './steps/09-get-ssl.js';
@@ -38,6 +39,7 @@ const STEPS: StepDefinition[] = [
   { name: 'mount_volume',        fn: stepMountVolume,        verify: verifyMountVolume        },
   { name: 'install_nginx',       fn: stepInstallNginx,       verify: verifyInstallNginx       },
   { name: 'generate_synapse',    fn: stepGenerateSynapse,    verify: verifyGenerateSynapse    },
+  { name: 'install_matrix_connector', fn: stepInstallMatrixConnector, verify: verifyInstallMatrixConnector },
   { name: 'write_compose',       fn: stepWriteCompose,       verify: verifyWriteCompose       },
   { name: 'start_containers',    fn: stepStartContainers,    verify: verifyStartContainers    },
   { name: 'get_ssl',             fn: stepGetSsl,             verify: verifyGetSsl             },

@@ -9,6 +9,7 @@ export const STEP_NAMES = [
   'mount_volume',
   'install_nginx',
   'generate_synapse',
+  'install_matrix_connector',
   'write_compose',
   'start_containers',
   'get_ssl',
@@ -20,6 +21,49 @@ export const STEP_NAMES = [
 export type StepName = typeof STEP_NAMES[number];
 
 export type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped';
+
+export interface SynapseModuleInstallPlanEntry {
+  name: string;
+  displayName: string;
+  category: string;
+  enabled: boolean;
+  enabledByDefault: boolean;
+  visibleInPortal: boolean;
+}
+
+export interface EnabledSynapseModuleSummary {
+  name: string;
+  displayName: string;
+  category: string;
+  enabledByDefault: boolean;
+  visibleInPortal: boolean;
+}
+
+export interface MatrixConnectorRuntimeConfig {
+  prilogApiUrl: string;
+  tenantId?: string;
+  tenantKey?: string;
+  subdomain?: string;
+  sharedSecret: string;
+  sharedSecretEnv?: string;
+  allowServerAdminBypass: boolean;
+  requestTimeoutSeconds: number;
+}
+
+export interface MatrixConnectorModuleConfig {
+  enabled: boolean;
+  moduleName: string;
+  moduleClass: string;
+  packageRepo: string;
+  packageRef?: string;
+  config: MatrixConnectorRuntimeConfig;
+}
+
+export interface SynapseModulesConfig {
+  installPlan: SynapseModuleInstallPlanEntry[];
+  enabledModules: EnabledSynapseModuleSummary[];
+  connector: MatrixConnectorModuleConfig | null;
+}
 
 export interface ProvisionConfig {
   orderId:            string;
@@ -38,6 +82,7 @@ export interface ProvisionConfig {
   maxUploadSize:      number;
   backendApiUrl:      string;
   agentToken:         string;
+  synapseModules?:    SynapseModulesConfig;
 }
 
 export interface StepResult {

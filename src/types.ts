@@ -99,7 +99,8 @@ export type CommandName =
   | 'system.df'
   | 'agent.update'
   | 'agent.version'
-  | 'provision';
+  | 'provision'
+  | 'connector.install';
 
 export interface ServerCommandPayload {
   commandId: string;

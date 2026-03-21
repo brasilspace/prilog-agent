@@ -5,6 +5,8 @@ import { getModuleStatus, enableModule, disableModule } from './handlers/modules
 import { executeCommand, spawnLogStream } from './utils/shell.js';
 import { runHealthCheck, HealEvent } from './handlers/healer.js';
 import { handleProvisionCommand } from './handlers/provision.js';
+import { ensureMatrixConnectorInstalled } from './provision/connector.js';
+import { ProvisionConfig } from './provision/types.js';
 import { ServerCommandPayload, LogChunkPayload } from './types.js';
 import { logger } from './utils/logger.js';
 
@@ -215,6 +217,33 @@ export class PrilogAgent {
         this.sendModuleStatus();
         this.transport.send('agent.command_result', {
           commandId, success: true, output: 'Module status sent', duration: Date.now() - start,
+        });
+        return;
+      }
+
+      if (command === 'connector.install') {
+        const connectorConfig = args?.config as ProvisionConfig | undefined;
+
+        if (!connectorConfig) {
+          this.transport.send('agent.command_result', {
+            commandId,
+            success: false,
+            output: 'connector.install benötigt args.config',
+            duration: Date.now() - start,
+          });
+          return;
+        }
+
+        const result = ensureMatrixConnectorInstalled(connectorConfig, {
+          refreshCompose: true,
+          restartSynapse: true,
+        });
+
+        this.transport.send('agent.command_result', {
+          commandId,
+          success: true,
+          output: result.message,
+          duration: Date.now() - start,
         });
         return;
       }
