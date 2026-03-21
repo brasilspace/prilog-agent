@@ -54,6 +54,7 @@ export interface MatrixConnectorModuleConfig {
   enabled: boolean;
   moduleName: string;
   moduleClass: string;
+  packageUrl?: string;
   packageRepo: string;
   packageRef?: string;
   config: MatrixConnectorRuntimeConfig;

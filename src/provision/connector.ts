@@ -11,6 +11,7 @@ const HOMESERVER_YAML = '/mnt/prilog-data/synapse/homeserver.yaml';
 const CONNECTOR_PACKAGE_REPO = 'git@github.com:brasilspace/prilog-matrix-connector.git';
 const CONNECTOR_MODULE_NAME = 'prilog_matrix_connector';
 const CONNECTOR_MODULE_CLASS = 'prilog_matrix_connector.module.PrilogMatrixConnectorModule';
+const CONNECTOR_TMP_ARCHIVE = '/tmp/prilog-matrix-connector.tar.gz';
 
 interface EnsureConnectorOptions {
   refreshCompose?: boolean;
@@ -62,6 +63,25 @@ function ensureGitCheckout(repo: string, ref: string): void {
   }
   execChecked(`git -C ${CONNECTOR_HOST_DIR} checkout ${ref}`);
   execChecked(`git -C ${CONNECTOR_HOST_DIR} reset --hard origin/${ref}`);
+}
+
+function ensureArtifactExtracted(url: string, sharedSecret?: string): void {
+  fs.mkdirSync('/opt/synapse/connectors', { recursive: true });
+  execChecked(`rm -rf ${CONNECTOR_HOST_DIR}`);
+  execChecked(`rm -f ${CONNECTOR_TMP_ARCHIVE}`);
+
+  const authHeader = sharedSecret
+    ? ` -H "x-matrix-connector-secret: ${sharedSecret.replace(/"/g, '\\"')}"`
+    : '';
+
+  try {
+    execChecked(`curl -fsSL${authHeader} "${url}" -o ${CONNECTOR_TMP_ARCHIVE}`, 120_000);
+  } catch (error) {
+    throw new Error(`Connector-Artefakt konnte nicht geladen werden: ${url}`);
+  }
+
+  execChecked(`mkdir -p ${CONNECTOR_HOST_DIR}`);
+  execChecked(`tar -xzf ${CONNECTOR_TMP_ARCHIVE} -C ${CONNECTOR_HOST_DIR} --strip-components=1`, 120_000);
 }
 
 function verifyCheckout(): void {
@@ -184,7 +204,11 @@ export function ensureMatrixConnectorInstalled(
     return { changed: false, message: 'Connector ist fuer diesen Tenant nicht aktiviert' };
   }
 
-  ensureGitCheckout(connector.packageRepo || CONNECTOR_PACKAGE_REPO, connector.packageRef || 'main');
+  if (connector.packageUrl) {
+    ensureArtifactExtracted(connector.packageUrl, connector.config.sharedSecret);
+  } else {
+    ensureGitCheckout(connector.packageRepo || CONNECTOR_PACKAGE_REPO, connector.packageRef || 'main');
+  }
   verifyCheckout();
   upsertConnectorModule(config);
 

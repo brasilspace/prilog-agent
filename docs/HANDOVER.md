@@ -18,6 +18,7 @@ Der Agent hat jetzt eine idempotente Installroutine fuer den `Prilog Matrix Conn
   - im Compose-File in den Synapse-Container gemountet.
 - Neuer Agent-Command:
   - `connector.install`
+- Wenn `packageUrl` in der Connector-Konfiguration vorhanden ist, laedt der Agent jetzt ein Tarball-Artefakt von der Prilog-Infrastruktur und entpackt es lokal.
 - Der Connector-Checkout nutzt jetzt standardmaessig den privaten SSH-Repo-Pfad `git@github.com:brasilspace/prilog-matrix-connector.git`.
 - Kundenserver brauchen dafuer einen GitHub-Deploy-Key oder SSH-Zugang fuer root bzw. den laufenden Agent-Prozess.
 
@@ -45,3 +46,6 @@ beides erfolgreich.
    - `homeserver.yaml` den Modulblock enthaelt
    - `docker-compose.yml` den Connector mountet
 3. `connector.install` gegen einen bestehenden Server ausloesen und pruefen, ob Synapse danach mit geladenem Modul startet.
+4. Wenn Artefakt-Auslieferung aktiv ist:
+   - pruefen, ob `packageUrl` verwendet wird
+   - und kein GitHub-Zugang auf dem Kundenserver noetig ist

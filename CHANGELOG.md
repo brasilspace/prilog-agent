@@ -2,6 +2,10 @@
 
 ## 2026-03-21
 
+### Connector-Artefakt Download
+- Der Agent kann den `Prilog Matrix Connector` jetzt auch als Tarball von der Prilog-Infrastruktur laden und entpacken.
+- Wenn `packageUrl` vorhanden ist, wird zuerst dieser Weg genutzt; Git bleibt nur noch Fallback.
+
 ### Connector Repo via SSH
 - Der Agent zieht den `Prilog Matrix Connector` jetzt standardmaessig ueber `git@github.com:brasilspace/prilog-matrix-connector.git`.
 - Fehlt auf dem Kundenserver ein GitHub-Deploy-Key oder SSH-Zugang, liefert der Agent jetzt eine klare SSH-bezogene Fehlermeldung statt des anonymen HTTPS-Clone-Fehlers.
