@@ -84,7 +84,7 @@ async function waitForSynapse(): Promise<void> {
   try {
     const { stdout } = await execAsync('docker ps --format "table {{.Names}}\\t{{.Status}}"', { timeout: 10_000 });
     debugInfo = stdout;
-  } catch {}
+  } catch { /* intentionally empty */ }
 
   throw new Error(
     `Synapse wurde nicht healthy nach ${MAX_WAIT_MS / 60000} Minuten.\n` +
@@ -132,7 +132,7 @@ export async function verifyStartContainers(_cfg: ProvisionConfig): Promise<void
   }
   if (!healthy) {
     let debug = '';
-    try { debug = execSync('docker ps --format "{{.Names}}: {{.Status}}"', { timeout: 5_000 }).toString(); } catch {}
+    try { debug = execSync('docker ps --format "{{.Names}}: {{.Status}}"', { timeout: 5_000 }).toString(); } catch { /* intentionally empty */ }
     throw new Error(`Synapse nicht healthy nach Container-Start.\n${debug}`);
   }
 }

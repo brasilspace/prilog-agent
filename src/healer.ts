@@ -36,7 +36,7 @@ function getComposePath(): string | null {
     try {
       execSync(`test -f ${p}`);
       return p;
-    } catch {}
+    } catch { /* intentionally empty */ }
   }
   return null;
 }

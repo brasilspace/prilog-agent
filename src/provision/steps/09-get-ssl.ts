@@ -51,7 +51,7 @@ async function waitForDns(domain: string, maxWaitMs = 120_000): Promise<void> {
           logger.info(`[Step 5] DNS für ${domain} aufgelöst`);
           return;
         }
-      } catch {}
+      } catch { /* intentionally empty */ }
     }
 
     logger.info(`[Step 5] DNS noch nicht propagiert — warte ${interval / 1000}s...`);
