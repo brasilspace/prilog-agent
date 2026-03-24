@@ -26,7 +26,7 @@ function getSynapseContainerName(): string {
         { timeout: 5_000 }
       ).toString().trim().replace(/'/g, '');
       if (out === 'true') return name;
-    } catch {}
+    } catch { /* intentionally empty */ }
   }
   throw new Error('Synapse Container nicht gefunden');
 }
