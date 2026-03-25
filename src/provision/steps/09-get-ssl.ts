@@ -11,13 +11,10 @@
  *             Certbot --keep-until-expiring verhindert unnötige Neuausstellung.
  */
 
-import { exec, execSync } from 'child_process';
-import { promisify } from 'util';
 import * as fs        from 'fs';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
-
-const execAsync = promisify(exec);
+import { safeExec }        from '../engine/safe-exec.js';
 
 // ─── Idempotenz-Check ─────────────────────────────────────────────────────────
 
@@ -37,8 +34,8 @@ async function waitForDns(domain: string, maxWaitMs = 120_000): Promise<void> {
 
   while (Date.now() - start < maxWaitMs) {
     try {
-      const { stdout } = await execAsync(`dig +short ${domain}`, { timeout: 10_000 });
-      const ip = stdout.trim();
+      const result = await safeExec('dig', ['+short', domain], { timeout: 10_000, ignoreExitCode: true });
+      const ip = result.stdout.trim();
       if (ip && ip.match(/^\d+\.\d+\.\d+\.\d+$/)) {
         logger.info(`[Step 5] DNS für ${domain} aufgelöst: ${ip}`);
         return;
@@ -46,8 +43,8 @@ async function waitForDns(domain: string, maxWaitMs = 120_000): Promise<void> {
     } catch {
       // dig nicht verfügbar? host versuchen
       try {
-        const { stdout } = await execAsync(`host ${domain}`, { timeout: 10_000 });
-        if (stdout.includes('has address')) {
+        const result = await safeExec('host', [domain], { timeout: 10_000, ignoreExitCode: true });
+        if (result.stdout.includes('has address')) {
           logger.info(`[Step 5] DNS für ${domain} aufgelöst`);
           return;
         }
@@ -95,23 +92,21 @@ export async function stepGetSsl(cfg: ProvisionConfig): Promise<void> {
 
     logger.info(`[Step 5] Hole Zertifikat für ${domain}...`);
 
-    const certbotCmd = [
-      'certbot certonly',
-      '--nginx',
-      '--non-interactive',
-      '--agree-tos',
-      '--email admin@prilog.chat',
-      `--domain ${domain}`,
-      '--keep-until-expiring',   // Idempotent: erneuert nur wenn nötig
-      '--quiet',
-    ].join(' ');
-
     try {
-      const { stdout, stderr } = await execAsync(certbotCmd, { timeout: 120_000 });
+      const result = await safeExec('certbot', [
+        'certonly',
+        '--nginx',
+        '--non-interactive',
+        '--agree-tos',
+        '--email', 'admin@prilog.chat',
+        '--domain', domain,
+        '--keep-until-expiring',
+        '--quiet',
+      ], { timeout: 120_000 });
       logger.info(`[Step 5] Zertifikat für ${domain} erhalten`);
-      if (stderr) logger.info(`[Step 5] certbot stderr: ${stderr}`);
+      if (result.stderr) logger.info(`[Step 5] certbot stderr: ${result.stderr}`);
     } catch (err: any) {
-      const msg = err?.stderr || err?.message || String(err);
+      const msg = err?.message || String(err);
       logger.error(`[Step 5] Certbot Fehler für ${domain}: ${msg}`);
       errors.push(`${domain}: ${msg}`);
     }
@@ -127,10 +122,8 @@ export async function stepGetSsl(cfg: ProvisionConfig): Promise<void> {
 export async function verifyGetSsl(cfg: ProvisionConfig): Promise<void> {
   const domains = [cfg.matrixDomain, cfg.webappDomain];
   for (const domain of domains) {
-    try {
-      execSync(`test -f /etc/letsencrypt/live/${domain}/fullchain.pem`, { stdio: 'ignore' });
-      execSync(`test -f /etc/letsencrypt/live/${domain}/privkey.pem`, { stdio: 'ignore' });
-    } catch {
+    if (!fs.existsSync(`/etc/letsencrypt/live/${domain}/fullchain.pem`) ||
+        !fs.existsSync(`/etc/letsencrypt/live/${domain}/privkey.pem`)) {
       throw new Error(`SSL-Zertifikat für ${domain} fehlt nach Certbot`);
     }
   }

@@ -7,12 +7,13 @@
 
 import {
   ProvisionConfig,
-  StepDefinition,
   StepName,
   StepResult,
   ReportFn,
 } from './types.js';
 import { logger } from '../utils/logger.js';
+import { validateProvisionConfig } from './engine/config-validator.js';
+import { StepRegistry } from './engine/step-registry.js';
 
 // ─── Steps importieren ────────────────────────────────────────────────────────
 
@@ -32,21 +33,20 @@ import { stepFinalize,          verifyFinalize          } from './steps/12-final
 
 // ─── Step Registry ────────────────────────────────────────────────────────────
 
-const STEPS: StepDefinition[] = [
-  { name: 'install_docker',      fn: stepInstallDocker,      verify: verifyInstallDocker      },
-  { name: 'configure_firewall',  fn: stepConfigureFirewall,  verify: verifyConfigureFirewall  },
-  { name: 'setup_tailscale',     fn: stepSetupTailscale,     verify: verifySetupTailscale     },
-  { name: 'mount_volume',        fn: stepMountVolume,        verify: verifyMountVolume        },
-  { name: 'install_nginx',       fn: stepInstallNginx,       verify: verifyInstallNginx       },
-  { name: 'generate_synapse',    fn: stepGenerateSynapse,    verify: verifyGenerateSynapse    },
-  { name: 'install_matrix_connector', fn: stepInstallMatrixConnector, verify: verifyInstallMatrixConnector },
-  { name: 'write_compose',       fn: stepWriteCompose,       verify: verifyWriteCompose       },
-  { name: 'start_containers',    fn: stepStartContainers,    verify: verifyStartContainers    },
-  { name: 'get_ssl',             fn: stepGetSsl,             verify: verifyGetSsl             },
-  { name: 'configure_nginx_ssl', fn: stepConfigureNginxSsl,  verify: verifyConfigureNginxSsl  },
-  { name: 'create_admin_user',   fn: stepCreateAdminUser,    verify: verifyCreateAdminUser    },
-  { name: 'finalize',            fn: stepFinalize,           verify: verifyFinalize           },
-];
+const registry = new StepRegistry();
+registry.register({ name: 'install_docker',          fn: stepInstallDocker,          verify: verifyInstallDocker      });
+registry.register({ name: 'configure_firewall',      fn: stepConfigureFirewall,      verify: verifyConfigureFirewall  });
+registry.register({ name: 'setup_tailscale',         fn: stepSetupTailscale,         verify: verifySetupTailscale     });
+registry.register({ name: 'mount_volume',            fn: stepMountVolume,            verify: verifyMountVolume        });
+registry.register({ name: 'install_nginx',           fn: stepInstallNginx,           verify: verifyInstallNginx       });
+registry.register({ name: 'generate_synapse',        fn: stepGenerateSynapse,        verify: verifyGenerateSynapse    });
+registry.register({ name: 'install_matrix_connector', fn: stepInstallMatrixConnector, verify: verifyInstallMatrixConnector });
+registry.register({ name: 'write_compose',           fn: stepWriteCompose,           verify: verifyWriteCompose       });
+registry.register({ name: 'start_containers',        fn: stepStartContainers,        verify: verifyStartContainers    });
+registry.register({ name: 'get_ssl',                 fn: stepGetSsl,                 verify: verifyGetSsl             });
+registry.register({ name: 'configure_nginx_ssl',     fn: stepConfigureNginxSsl,      verify: verifyConfigureNginxSsl  });
+registry.register({ name: 'create_admin_user',       fn: stepCreateAdminUser,        verify: verifyCreateAdminUser    });
+registry.register({ name: 'finalize',                fn: stepFinalize,               verify: verifyFinalize           });
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
@@ -55,10 +55,14 @@ export async function runProvision(
   report:         ReportFn,
   startFromStep?: StepName,
 ): Promise<StepResult[]> {
+  // ── Config validieren ─────────────────────────────────────────────
+  validateProvisionConfig(config);
+
   const results: StepResult[] = [];
+  const STEPS = registry.getAll();
 
   const startIndex = startFromStep
-    ? STEPS.findIndex(s => s.name === startFromStep)
+    ? registry.findIndex(startFromStep)
     : 0;
 
   if (startFromStep && startIndex === -1) {
@@ -83,7 +87,7 @@ export async function runProvision(
     try {
       // ── Step ausführen ───────────────────────────────────────────
       await fn(config);
-      logger.info(`[Provision] ✅ ${name} ausgeführt — verifiziere...`);
+      logger.info(`[Provision] ${name} ausgeführt — verifiziere...`);
 
       // ── Verifizieren ─────────────────────────────────────────────
       await verify(config);
@@ -91,14 +95,14 @@ export async function runProvision(
       const duration = Date.now() - stepStart;
       report(name, 'success');
       results.push({ step: name, status: 'success', duration });
-      logger.info(`[Provision] ✅ ${name} verifiziert (${duration}ms)`);
+      logger.info(`[Provision] ${name} verifiziert (${duration}ms)`);
 
     } catch (err: unknown) {
       const duration = Date.now() - stepStart;
       const message  = err instanceof Error ? err.message : String(err);
       report(name, 'error', message);
       results.push({ step: name, status: 'error', message, duration });
-      logger.error(`[Provision] ❌ ${name} (${duration}ms): ${message}`);
+      logger.error(`[Provision] ${name} (${duration}ms): ${message}`);
       break; // Kein nächster Step
     }
   }

@@ -7,24 +7,16 @@
  *             apt-get install ist von sich aus idempotent.
  */
 
-import { execSync } from 'child_process';
-import { exec }     from 'child_process';
-import { promisify } from 'util';
 import * as fs       from 'fs';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
-
-const execAsync = promisify(exec);
+import { safeExec }        from '../engine/safe-exec.js';
 
 // ─── Idempotenz-Check ─────────────────────────────────────────────────────────
 
-function isNginxInstalled(): boolean {
-  try {
-    execSync('which nginx', { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+async function isNginxInstalled(): Promise<boolean> {
+  const result = await safeExec('which', ['nginx'], { ignoreExitCode: true });
+  return result.exitCode === 0;
 }
 
 // ─── Nginx HTTP-only Config ───────────────────────────────────────────────────
@@ -57,13 +49,13 @@ server {
 
 export async function stepInstallNginx(cfg: ProvisionConfig): Promise<void> {
   // ── Idempotenz: bereits installiert? ─────────────────────────────
-  if (isNginxInstalled()) {
+  if (await isNginxInstalled()) {
     logger.info('[Step 1] Nginx bereits installiert — überspringe apt-get');
   } else {
     logger.info('[Step 1] Installiere Nginx + Certbot...');
-    await execAsync(
-      'apt-get install -y nginx certbot python3-certbot-nginx',
-      { timeout: 120_000 }
+    await safeExec(
+      'apt-get', ['install', '-y', 'nginx', 'certbot', 'python3-certbot-nginx'],
+      { timeout: 120_000 },
     );
     logger.info('[Step 1] Nginx + Certbot installiert');
   }
@@ -91,31 +83,30 @@ export async function stepInstallNginx(cfg: ProvisionConfig): Promise<void> {
   }
 
   // ── Nginx testen und (re)starten ──────────────────────────────────
-  await execAsync('nginx -t', { timeout: 10_000 });
+  await safeExec('nginx', ['-t'], { timeout: 10_000 });
 
   // Nginx starten falls nicht läuft, sonst reload
-  try {
-    execSync('systemctl is-active nginx --quiet');
-    await execAsync('systemctl reload nginx', { timeout: 15_000 });
+  const activeResult = await safeExec('systemctl', ['is-active', 'nginx', '--quiet'], { ignoreExitCode: true });
+  if (activeResult.exitCode === 0) {
+    await safeExec('systemctl', ['reload', 'nginx'], { timeout: 15_000 });
     logger.info('[Step 1] Nginx reloaded');
-  } catch {
-    await execAsync('systemctl enable nginx && systemctl start nginx', { timeout: 30_000 });
+  } else {
+    await safeExec('systemctl', ['enable', 'nginx'], { timeout: 30_000 });
+    await safeExec('systemctl', ['start', 'nginx'], { timeout: 30_000 });
     logger.info('[Step 1] Nginx gestartet');
   }
 }
 
 export async function verifyInstallNginx(_cfg: ProvisionConfig): Promise<void> {
-  if (!isNginxInstalled()) {
+  if (!(await isNginxInstalled())) {
     throw new Error('Nginx nicht installiert');
   }
-  try {
-    execSync('nginx -t', { stdio: 'ignore', timeout: 10_000 });
-  } catch {
+  const nginxTest = await safeExec('nginx', ['-t'], { ignoreExitCode: true, timeout: 10_000 });
+  if (nginxTest.exitCode !== 0) {
     throw new Error('Nginx Konfiguration ungültig (nginx -t fehlgeschlagen)');
   }
-  try {
-    execSync('systemctl is-active nginx', { stdio: 'ignore' });
-  } catch {
+  const activeResult = await safeExec('systemctl', ['is-active', 'nginx'], { ignoreExitCode: true });
+  if (activeResult.exitCode !== 0) {
     throw new Error('Nginx-Dienst läuft nicht');
   }
 }

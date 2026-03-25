@@ -16,13 +16,10 @@
  * Idempotenz: Prüft ob homeserver.yaml bereits PostgreSQL-Config enthält.
  */
 
-import { exec, execSync } from 'child_process';
-import { promisify } from 'util';
 import * as fs        from 'fs';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
-
-const execAsync = promisify(exec);
+import { safeExec }        from '../engine/safe-exec.js';
 
 const SYNAPSE_DATA_DIR  = '/mnt/prilog-data/synapse';
 const HOMESERVER_YAML   = `${SYNAPSE_DATA_DIR}/homeserver.yaml`;
@@ -154,15 +151,13 @@ export async function stepGenerateSynapse(cfg: ProvisionConfig): Promise<void> {
   // ── Synapse Config generieren ────────────────────────────────────
   logger.info('[Step 2] Generiere Synapse Config...');
 
-  const generateCmd = [
-    'docker run --rm',
-    `-v ${SYNAPSE_DATA_DIR}:/data`,
-    `-e SYNAPSE_SERVER_NAME=${cfg.matrixDomain}`,
-    '-e SYNAPSE_REPORT_STATS=no',
-    'matrixdotorg/synapse:latest generate',
-  ].join(' ');
-
-  await execAsync(generateCmd, { timeout: 120_000 });
+  await safeExec('docker', [
+    'run', '--rm',
+    '-v', `${SYNAPSE_DATA_DIR}:/data`,
+    '-e', `SYNAPSE_SERVER_NAME=${cfg.matrixDomain}`,
+    '-e', 'SYNAPSE_REPORT_STATS=no',
+    'matrixdotorg/synapse:latest', 'generate',
+  ], { timeout: 120_000 });
 
   if (!fs.existsSync(HOMESERVER_YAML)) {
     throw new Error(`homeserver.yaml wurde nicht erstellt: ${HOMESERVER_YAML}`);
@@ -183,14 +178,12 @@ export async function stepGenerateSynapse(cfg: ProvisionConfig): Promise<void> {
   logger.info('[Step 2] homeserver.yaml gepatcht');
 
   // ── Dateirechte setzen (Synapse läuft als UID 991) ─────────────
-  await execAsync(`chown -R 991:991 ${SYNAPSE_DATA_DIR}`, { timeout: 15_000 });
+  await safeExec('chown', ['-R', '991:991', SYNAPSE_DATA_DIR], { timeout: 15_000 });
   logger.info('[Step 2] Dateirechte gesetzt');
 }
 
 export async function verifyGenerateSynapse(_cfg: ProvisionConfig): Promise<void> {
-  try {
-    execSync(`test -f ${HOMESERVER_YAML}`, { stdio: 'ignore' });
-  } catch {
+  if (!fs.existsSync(HOMESERVER_YAML)) {
     throw new Error('homeserver.yaml fehlt nach Synapse-Generate');
   }
   const keys = fs.readdirSync(SYNAPSE_DATA_DIR).filter(f => f.endsWith('.signing.key'));

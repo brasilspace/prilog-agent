@@ -12,13 +12,9 @@
  *             Bereits laufende Container werden nicht neu erstellt.
  */
 
-import { exec }      from 'child_process';
-import { execSync }  from 'child_process';
-import { promisify } from 'util';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
-
-const execAsync = promisify(exec);
+import { safeExec, dockerCompose } from '../engine/safe-exec.js';
 
 const COMPOSE_PATH   = '/opt/prilog/docker-compose.yml';
 const MAX_WAIT_MS    = 5 * 60 * 1000;   // 5 Minuten
@@ -26,28 +22,22 @@ const POLL_INTERVAL  = 10_000;           // 10 Sekunden
 
 // ─── Container Health Check ───────────────────────────────────────────────────
 
-function getContainerHealth(containerName: string): string {
-  try {
-    const out = execSync(
-      `docker inspect --format='{{.State.Health.Status}}' ${containerName} 2>/dev/null`,
-      { timeout: 5_000 }
-    ).toString().trim().replace(/'/g, '');
-    return out || 'unknown';
-  } catch {
-    return 'not_found';
-  }
+async function getContainerHealth(containerName: string): Promise<string> {
+  const result = await safeExec(
+    'docker', ['inspect', '--format={{.State.Health.Status}}', containerName],
+    { ignoreExitCode: true, timeout: 5_000 },
+  );
+  if (result.exitCode !== 0) return 'not_found';
+  return result.stdout.trim().replace(/'/g, '') || 'unknown';
 }
 
-function isContainerRunning(containerName: string): boolean {
-  try {
-    const out = execSync(
-      `docker inspect --format='{{.State.Running}}' ${containerName} 2>/dev/null`,
-      { timeout: 5_000 }
-    ).toString().trim().replace(/'/g, '');
-    return out === 'true';
-  } catch {
-    return false;
-  }
+async function isContainerRunning(containerName: string): Promise<boolean> {
+  const result = await safeExec(
+    'docker', ['inspect', '--format={{.State.Running}}', containerName],
+    { ignoreExitCode: true, timeout: 5_000 },
+  );
+  if (result.exitCode !== 0) return false;
+  return result.stdout.trim().replace(/'/g, '') === 'true';
 }
 
 // ─── Wait for Synapse ─────────────────────────────────────────────────────────
@@ -62,11 +52,11 @@ async function waitForSynapse(): Promise<void> {
 
   while (Date.now() - start < MAX_WAIT_MS) {
     for (const name of candidateNames) {
-      const health = getContainerHealth(name);
+      const health = await getContainerHealth(name);
 
       if (health === 'healthy') {
         const elapsed = Math.round((Date.now() - start) / 1000);
-        logger.info(`[Step 4] ✅ Synapse healthy (${name}, nach ${elapsed}s)`);
+        logger.info(`[Step 4] Synapse healthy (${name}, nach ${elapsed}s)`);
         return;
       }
 
@@ -82,8 +72,8 @@ async function waitForSynapse(): Promise<void> {
   // Timeout — Fehler mit Debug-Infos
   let debugInfo = '';
   try {
-    const { stdout } = await execAsync('docker ps --format "table {{.Names}}\\t{{.Status}}"', { timeout: 10_000 });
-    debugInfo = stdout;
+    const result = await safeExec('docker', ['ps', '--format', 'table {{.Names}}\t{{.Status}}'], { timeout: 10_000, ignoreExitCode: true });
+    debugInfo = result.stdout;
   } catch { /* intentionally empty */ }
 
   throw new Error(
@@ -97,12 +87,12 @@ async function waitForSynapse(): Promise<void> {
 export async function stepStartContainers(_cfg: ProvisionConfig): Promise<void> {
   // ── Idempotenz: bereits laufend? ──────────────────────────────────
   const alreadyRunning =
-    isContainerRunning('prilog-synapse-1') ||
-    isContainerRunning('synapse');
+    (await isContainerRunning('prilog-synapse-1')) ||
+    (await isContainerRunning('synapse'));
 
   if (alreadyRunning) {
-    const health = getContainerHealth('prilog-synapse-1') ||
-                   getContainerHealth('synapse');
+    const health = (await getContainerHealth('prilog-synapse-1')) ||
+                   (await getContainerHealth('synapse'));
 
     if (health === 'healthy') {
       logger.info('[Step 4] Container bereits laufend und healthy — überspringe');
@@ -112,12 +102,12 @@ export async function stepStartContainers(_cfg: ProvisionConfig): Promise<void> 
 
   // ── Images pullen ─────────────────────────────────────────────────
   logger.info('[Step 4] Pulle Docker Images...');
-  await execAsync(`docker compose -f ${COMPOSE_PATH} pull`, { timeout: 180_000 });
+  await dockerCompose(COMPOSE_PATH, ['pull'], { timeout: 180_000 });
   logger.info('[Step 4] Images gepullt');
 
   // ── Container starten ────────────────────────────────────────────
   logger.info('[Step 4] Starte Container...');
-  await execAsync(`docker compose -f ${COMPOSE_PATH} up -d`, { timeout: 60_000 });
+  await dockerCompose(COMPOSE_PATH, ['up', '-d'], { timeout: 60_000 });
   logger.info('[Step 4] Container gestartet');
 
   // ── Auf Synapse-Health warten ────────────────────────────────────
@@ -128,11 +118,14 @@ export async function verifyStartContainers(_cfg: ProvisionConfig): Promise<void
   const candidates = ['prilog-synapse-1', 'synapse'];
   let healthy = false;
   for (const name of candidates) {
-    if (getContainerHealth(name) === 'healthy') { healthy = true; break; }
+    if ((await getContainerHealth(name)) === 'healthy') { healthy = true; break; }
   }
   if (!healthy) {
     let debug = '';
-    try { debug = execSync('docker ps --format "{{.Names}}: {{.Status}}"', { timeout: 5_000 }).toString(); } catch { /* intentionally empty */ }
+    try {
+      const result = await safeExec('docker', ['ps', '--format', '{{.Names}}: {{.Status}}'], { timeout: 5_000, ignoreExitCode: true });
+      debug = result.stdout;
+    } catch { /* intentionally empty */ }
     throw new Error(`Synapse nicht healthy nach Container-Start.\n${debug}`);
   }
 }

@@ -5,57 +5,45 @@
  * Idempotent: prüft ob Tailscale bereits verbunden ist.
  */
 
-import { execSync }   from 'child_process';
-import { promisify }  from 'util';
-import { exec }       from 'child_process';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
+import { safeExec }        from '../engine/safe-exec.js';
 
-const execAsync = promisify(exec);
-
-function isTailscaleConnected(): boolean {
-  try {
-    const out = execSync('tailscale status', { encoding: 'utf-8' });
-    return out.includes('prilog-');
-  } catch {
-    return false;
-  }
+async function isTailscaleConnected(): Promise<boolean> {
+  const result = await safeExec('tailscale', ['status'], { ignoreExitCode: true });
+  return result.exitCode === 0 && result.stdout.includes('prilog-');
 }
 
-function isTailscaleInstalled(): boolean {
-  try {
-    execSync('which tailscale', { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+async function isTailscaleInstalled(): Promise<boolean> {
+  const result = await safeExec('which', ['tailscale'], { ignoreExitCode: true });
+  return result.exitCode === 0;
 }
 
 export async function stepSetupTailscale(cfg: ProvisionConfig): Promise<void> {
-  if (isTailscaleConnected()) {
+  if (await isTailscaleConnected()) {
     logger.info('[Step 03] Tailscale bereits verbunden — überspringe');
     return;
   }
 
-  if (!isTailscaleInstalled()) {
+  if (!(await isTailscaleInstalled())) {
     logger.info('[Step 03] Installiere Tailscale...');
-    await execAsync('curl -fsSL https://tailscale.com/install.sh | sh', {
-      shell: '/bin/bash',
+    // Shell pipe — hardcoded install script, no user input
+    await safeExec('bash', ['-c', 'curl -fsSL https://tailscale.com/install.sh | sh'], {
       timeout: 120_000,
     });
   }
 
   logger.info(`[Step 03] Verbinde mit Tailnet als prilog-${cfg.subdomain}...`);
-  await execAsync(
-    `tailscale up --authkey=${cfg.tailscaleAuthKey} --hostname=prilog-${cfg.subdomain} --accept-routes`,
-    { timeout: 60_000 }
+  await safeExec(
+    'tailscale', ['up', `--authkey=${cfg.tailscaleAuthKey}`, `--hostname=prilog-${cfg.subdomain}`, '--accept-routes'],
+    { timeout: 60_000 },
   );
 
   logger.info('[Step 03] Tailscale verbunden');
 }
 
 export async function verifySetupTailscale(_cfg: ProvisionConfig): Promise<void> {
-  if (!isTailscaleConnected()) {
+  if (!(await isTailscaleConnected())) {
     throw new Error('Tailscale nicht verbunden nach Setup (tailscale status zeigt nicht "Connected")');
   }
 }

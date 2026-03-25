@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 
 import { parseDocument, YAMLSeq, isMap } from 'yaml';
@@ -6,6 +5,7 @@ import { parseDocument, YAMLSeq, isMap } from 'yaml';
 import { logger } from '../utils/logger.js';
 import { ProvisionConfig } from './types.js';
 import { COMPOSE_PATH, CONNECTOR_HOST_DIR, writeComposeFile } from './compose.js';
+import { safeExec, dockerCompose } from './engine/safe-exec.js';
 
 const HOMESERVER_YAML = '/mnt/prilog-data/synapse/homeserver.yaml';
 const CONNECTOR_PACKAGE_REPO = 'git@github.com:brasilspace/prilog-matrix-connector.git';
@@ -24,18 +24,13 @@ export function getEnabledConnector(config: ProvisionConfig) {
   return connector;
 }
 
-function execChecked(command: string, timeout = 60_000): string {
-  logger.info(`[Connector] ${command}`);
-  return execSync(command, { timeout, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
-}
-
-function ensureGitCheckout(repo: string, ref: string): void {
+async function ensureGitCheckout(repo: string, ref: string): Promise<void> {
   const isGithubSshRepo = repo.startsWith('git@github.com:');
 
   if (!fs.existsSync(CONNECTOR_HOST_DIR)) {
     fs.mkdirSync('/opt/synapse/connectors', { recursive: true });
     try {
-      execChecked(`git clone --depth 1 --branch ${ref} ${repo} ${CONNECTOR_HOST_DIR}`, 120_000);
+      await safeExec('git', ['clone', '--depth', '1', '--branch', ref, repo, CONNECTOR_HOST_DIR], { timeout: 120_000 });
     } catch (error) {
       if (isGithubSshRepo) {
         throw new Error(
@@ -52,7 +47,7 @@ function ensureGitCheckout(repo: string, ref: string): void {
   }
 
   try {
-    execChecked(`git -C ${CONNECTOR_HOST_DIR} fetch origin ${ref} --depth 1`, 120_000);
+    await safeExec('git', ['-C', CONNECTOR_HOST_DIR, 'fetch', 'origin', ref, '--depth', '1'], { timeout: 120_000 });
   } catch (error) {
     if (isGithubSshRepo) {
       throw new Error(
@@ -61,27 +56,32 @@ function ensureGitCheckout(repo: string, ref: string): void {
     }
     throw error;
   }
-  execChecked(`git -C ${CONNECTOR_HOST_DIR} checkout ${ref}`);
-  execChecked(`git -C ${CONNECTOR_HOST_DIR} reset --hard origin/${ref}`);
+  await safeExec('git', ['-C', CONNECTOR_HOST_DIR, 'checkout', ref]);
+  await safeExec('git', ['-C', CONNECTOR_HOST_DIR, 'reset', '--hard', `origin/${ref}`]);
 }
 
-function ensureArtifactExtracted(url: string, sharedSecret?: string): void {
+async function ensureArtifactExtracted(url: string, sharedSecret?: string): Promise<void> {
   fs.mkdirSync('/opt/synapse/connectors', { recursive: true });
-  execChecked(`rm -rf ${CONNECTOR_HOST_DIR}`);
-  execChecked(`rm -f ${CONNECTOR_TMP_ARCHIVE}`);
+  if (fs.existsSync(CONNECTOR_HOST_DIR)) {
+    fs.rmSync(CONNECTOR_HOST_DIR, { recursive: true, force: true });
+  }
+  if (fs.existsSync(CONNECTOR_TMP_ARCHIVE)) {
+    fs.unlinkSync(CONNECTOR_TMP_ARCHIVE);
+  }
 
-  const authHeader = sharedSecret
-    ? ` -H "x-matrix-connector-secret: ${sharedSecret.replace(/"/g, '\\"')}"`
-    : '';
+  const curlArgs = ['-fsSL', url, '-o', CONNECTOR_TMP_ARCHIVE];
+  if (sharedSecret) {
+    curlArgs.unshift('-H', `x-matrix-connector-secret: ${sharedSecret}`);
+  }
 
   try {
-    execChecked(`curl -fsSL${authHeader} "${url}" -o ${CONNECTOR_TMP_ARCHIVE}`, 120_000);
+    await safeExec('curl', curlArgs, { timeout: 120_000 });
   } catch (error) {
     throw new Error(`Connector-Artefakt konnte nicht geladen werden: ${url}`);
   }
 
-  execChecked(`mkdir -p ${CONNECTOR_HOST_DIR}`);
-  execChecked(`tar -xzf ${CONNECTOR_TMP_ARCHIVE} -C ${CONNECTOR_HOST_DIR} --strip-components=1`, 120_000);
+  fs.mkdirSync(CONNECTOR_HOST_DIR, { recursive: true });
+  await safeExec('tar', ['-xzf', CONNECTOR_TMP_ARCHIVE, '-C', CONNECTOR_HOST_DIR, '--strip-components=1'], { timeout: 120_000 });
 }
 
 function verifyCheckout(): void {
@@ -179,19 +179,19 @@ function verifyConnectorConfigured(config: ProvisionConfig): void {
   }
 }
 
-function restartSynapseIfRequested(shouldRestart: boolean): void {
+async function restartSynapseIfRequested(shouldRestart: boolean): Promise<void> {
   if (!shouldRestart) return;
   if (!fs.existsSync(COMPOSE_PATH)) {
     throw new Error(`docker-compose.yml fehlt fuer Connector-Restart: ${COMPOSE_PATH}`);
   }
 
-  execChecked(`docker compose -f ${COMPOSE_PATH} up -d synapse`, 120_000);
+  await dockerCompose(COMPOSE_PATH, ['up', '-d', 'synapse'], { timeout: 120_000 });
 }
 
-export function ensureMatrixConnectorInstalled(
+export async function ensureMatrixConnectorInstalled(
   config: ProvisionConfig,
   options: EnsureConnectorOptions = {},
-): { changed: boolean; message: string } {
+): Promise<{ changed: boolean; message: string }> {
   const connector = getEnabledConnector(config);
 
   upsertConnectorModule(config);
@@ -205,9 +205,9 @@ export function ensureMatrixConnectorInstalled(
   }
 
   if (connector.packageUrl) {
-    ensureArtifactExtracted(connector.packageUrl, connector.config.sharedSecret);
+    await ensureArtifactExtracted(connector.packageUrl, connector.config.sharedSecret);
   } else {
-    ensureGitCheckout(connector.packageRepo || CONNECTOR_PACKAGE_REPO, connector.packageRef || 'main');
+    await ensureGitCheckout(connector.packageRepo || CONNECTOR_PACKAGE_REPO, connector.packageRef || 'main');
   }
   verifyCheckout();
   upsertConnectorModule(config);
@@ -217,7 +217,7 @@ export function ensureMatrixConnectorInstalled(
   }
 
   verifyConnectorConfigured(config);
-  restartSynapseIfRequested(Boolean(options.restartSynapse));
+  await restartSynapseIfRequested(Boolean(options.restartSynapse));
 
   return {
     changed: true,

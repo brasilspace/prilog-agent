@@ -1,27 +1,28 @@
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import { CommandName } from '../types.js';
-
-const execAsync = promisify(exec);
+import { safeExec } from '../provision/engine/safe-exec.js';
 
 // ─── Whitelist ────────────────────────────────────────────────────────────────
 // Nur diese Befehle dürfen ausgeführt werden. Kein arbitrary shell exec.
 
-const COMMAND_MAP: Partial<Record<CommandName, (args?: Record<string, string | number | boolean>) => string>> = {
-  'synapse.restart':      () => 'docker compose -f /opt/synapse/docker-compose.yml restart synapse',
-  'synapse.reload':       () => 'docker compose -f /opt/synapse/docker-compose.yml kill -s HUP synapse',
-  'synapse.status':       () => 'docker compose -f /opt/synapse/docker-compose.yml ps synapse',
-  'docker.ps':            () => 'docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"',
-  'docker.logs':          (a) => `docker logs --tail ${a?.lines ?? 100} ${a?.container ?? 'synapse'}`,
-  'module.enable':        (a) => `docker compose -f /opt/synapse/modules/${a?.module}/docker-compose.yml up -d`,
-  'module.disable':       (a) => `docker compose -f /opt/synapse/modules/${a?.module}/docker-compose.yml down`,
-  'module.status':        () => 'docker ps --filter "label=prilog.module" --format "{{.Names}}\\t{{.Status}}"',
-  'logs.stream.start':    () => '',  // handled separately via spawn
-  'logs.stream.stop':     () => '',  // handled separately
-  'system.status':        () => 'uptime && free -m && df -h /opt/synapse',
-  'system.df':            () => 'df -h /opt/synapse/data',
-  'agent.update':         () => 'cd /opt/prilog-agent && git pull && npm run build && sudo systemctl restart prilog-agent',
-  'agent.version':        () => 'cat /opt/prilog-agent/package.json | grep version',
+interface CommandDef {
+  command: string;
+  args: (a?: Record<string, string | number | boolean>) => string[];
+}
+
+const COMMAND_MAP: Partial<Record<CommandName, CommandDef>> = {
+  'synapse.restart':      { command: 'docker', args: () => ['compose', '-f', '/opt/synapse/docker-compose.yml', 'restart', 'synapse'] },
+  'synapse.reload':       { command: 'docker', args: () => ['compose', '-f', '/opt/synapse/docker-compose.yml', 'kill', '-s', 'HUP', 'synapse'] },
+  'synapse.status':       { command: 'docker', args: () => ['compose', '-f', '/opt/synapse/docker-compose.yml', 'ps', 'synapse'] },
+  'docker.ps':            { command: 'docker', args: () => ['ps', '--format', 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'] },
+  'docker.logs':          { command: 'docker', args: (a) => ['logs', '--tail', String(a?.lines ?? 100), String(a?.container ?? 'synapse')] },
+  'module.enable':        { command: 'docker', args: (a) => ['compose', '-f', `/opt/synapse/modules/${a?.module}/docker-compose.yml`, 'up', '-d'] },
+  'module.disable':       { command: 'docker', args: (a) => ['compose', '-f', `/opt/synapse/modules/${a?.module}/docker-compose.yml`, 'down'] },
+  'module.status':        { command: 'docker', args: () => ['ps', '--filter', 'label=prilog.module', '--format', '{{.Names}}\t{{.Status}}'] },
+  'system.status':        { command: 'bash',   args: () => ['-c', 'uptime && free -m && df -h /opt/synapse'] },
+  'system.df':            { command: 'df',     args: () => ['-h', '/opt/synapse/data'] },
+  'agent.update':         { command: 'bash',   args: () => ['-c', 'cd /opt/prilog-agent && git pull && npm run build && sudo systemctl restart prilog-agent'] },
+  'agent.version':        { command: 'bash',   args: () => ['-c', 'cat /opt/prilog-agent/package.json | grep version'] },
 };
 
 export async function executeCommand(
@@ -30,21 +31,22 @@ export async function executeCommand(
 ): Promise<{ success: boolean; output: string; duration: number }> {
   const start = Date.now();
 
-  const cmdFn = COMMAND_MAP[command];
-  if (!cmdFn) {
+  const cmdDef = COMMAND_MAP[command];
+  if (!cmdDef) {
     return { success: false, output: `Unknown command: ${command}`, duration: 0 };
   }
 
-  const cmdStr = cmdFn(args);
-  if (!cmdStr) {
+  const cmdArgs = cmdDef.args(args);
+  // Skip empty commands (like logs.stream.start/stop handled separately)
+  if (!cmdDef.command) {
     return { success: true, output: 'OK', duration: 0 };
   }
 
   try {
-    const { stdout, stderr } = await execAsync(cmdStr, { timeout: 30_000 });
+    const result = await safeExec(cmdDef.command, cmdArgs, { timeout: 30_000, ignoreExitCode: true });
     return {
-      success: true,
-      output: (stdout + stderr).trim(),
+      success: result.exitCode === 0,
+      output: (result.stdout + result.stderr).trim(),
       duration: Date.now() - start,
     };
   } catch (err: any) {
@@ -63,13 +65,13 @@ export function spawnLogStream(
   onLine: (line: string) => void,
   onClose: () => void
 ): () => void {
-  const cmds: Record<string, string[]> = {
+  const cmds: Record<string, [string, string[]]> = {
     synapse: ['docker', ['logs', '-f', '--tail', '50', 'synapse']],
     nginx:   ['tail',   ['-f', '/var/log/nginx/access.log']],
     agent:   ['journalctl', ['-u', 'prilog-agent', '-f', '-n', '50']],
-  } as any;
+  };
 
-  const [cmd, cmdArgs] = cmds[source] as [string, string[]];
+  const [cmd, cmdArgs] = cmds[source];
   const child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   const handle = (data: Buffer) => {

@@ -5,68 +5,64 @@
  * Idempotent: prüft ob docker bereits installiert ist.
  */
 
-import { execSync }   from 'child_process';
-import { promisify }  from 'util';
-import { exec }       from 'child_process';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
+import { safeExec }        from '../engine/safe-exec.js';
 
-const execAsync = promisify(exec);
-
-function isDockerInstalled(): boolean {
-  try {
-    execSync('docker --version', { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+async function isDockerInstalled(): Promise<boolean> {
+  const result = await safeExec('docker', ['--version'], { ignoreExitCode: true });
+  return result.exitCode === 0;
 }
 
 export async function stepInstallDocker(_cfg: ProvisionConfig): Promise<void> {
-  if (isDockerInstalled()) {
+  if (await isDockerInstalled()) {
     logger.info('[Step 01] Docker bereits installiert — überspringe');
     return;
   }
 
   logger.info('[Step 01] Installiere Docker...');
 
-  await execAsync(
-    'apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release',
-    { timeout: 120_000 }
+  await safeExec(
+    'apt-get', ['install', '-y', 'apt-transport-https', 'ca-certificates', 'curl', 'gnupg', 'lsb-release'],
+    { timeout: 120_000 },
   );
 
-  await execAsync(
-    'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg',
-    { timeout: 30_000 }
+  // Shell pipe for GPG key — hardcoded command, no user input
+  await safeExec(
+    'bash', ['-c', 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg'],
+    { timeout: 30_000 },
   );
 
-  await execAsync(
-    'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list',
-    { shell: '/bin/bash', timeout: 10_000 }
+  // Add Docker repo — needs shell for $(lsb_release -cs)
+  await safeExec(
+    'bash', ['-c', 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list'],
+    { timeout: 10_000 },
   );
 
-  await execAsync('apt-get update -qq', { timeout: 60_000 });
+  await safeExec('apt-get', ['update', '-qq'], { timeout: 60_000 });
 
-  await execAsync(
-    'apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin',
-    { timeout: 180_000 }
+  await safeExec(
+    'apt-get', ['install', '-y', 'docker-ce', 'docker-ce-cli', 'containerd.io', 'docker-compose-plugin'],
+    { timeout: 180_000 },
   );
 
-  await execAsync('systemctl enable docker && systemctl start docker', { timeout: 30_000 });
+  await safeExec('systemctl', ['enable', 'docker'], { timeout: 30_000 });
+  await safeExec('systemctl', ['start', 'docker'], { timeout: 30_000 });
 
   logger.info('[Step 01] Docker installiert und gestartet');
 }
 
 export async function verifyInstallDocker(_cfg: ProvisionConfig): Promise<void> {
-  try {
-    execSync('docker --version', { stdio: 'ignore' });
-    execSync('docker compose version', { stdio: 'ignore' });
-  } catch {
+  const dockerResult = await safeExec('docker', ['--version'], { ignoreExitCode: true });
+  if (dockerResult.exitCode !== 0) {
     throw new Error('Docker oder Docker Compose nicht verfügbar nach Installation');
   }
-  try {
-    execSync('systemctl is-active docker', { stdio: 'ignore' });
-  } catch {
+  const composeResult = await safeExec('docker', ['compose', 'version'], { ignoreExitCode: true });
+  if (composeResult.exitCode !== 0) {
+    throw new Error('Docker oder Docker Compose nicht verfügbar nach Installation');
+  }
+  const activeResult = await safeExec('systemctl', ['is-active', 'docker'], { ignoreExitCode: true });
+  if (activeResult.exitCode !== 0) {
     throw new Error('Docker-Dienst läuft nicht (systemctl is-active docker fehlgeschlagen)');
   }
 }

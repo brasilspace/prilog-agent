@@ -5,31 +5,23 @@
  * Device: /dev/disk/by-id/scsi-0HC_Volume_<hetznerVolumeId>
  */
 
-import { execSync }  from 'child_process';
-import { promisify } from 'util';
-import { exec }      from 'child_process';
 import * as fs       from 'fs';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
-
-const execAsync = promisify(exec);
+import { safeExec }        from '../engine/safe-exec.js';
 
 const MOUNT_POINT = '/mnt/prilog-data';
 
-function isVolumeMounted(): boolean {
-  try {
-    execSync(`mountpoint -q ${MOUNT_POINT}`, { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+async function isVolumeMounted(): Promise<boolean> {
+  const result = await safeExec('mountpoint', ['-q', MOUNT_POINT], { ignoreExitCode: true });
+  return result.exitCode === 0;
 }
 
 export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
   // Device-Pfad mit numerischer Hetzner Volume ID
   const device = `/dev/disk/by-id/scsi-0HC_Volume_${cfg.hetznerVolumeId}`;
 
-  if (isVolumeMounted()) {
+  if (await isVolumeMounted()) {
     logger.info('[Step 04] Volume bereits gemountet — überspringe');
   } else {
     logger.info(`[Step 04] Mounte ${device} → ${MOUNT_POINT}`);
@@ -44,7 +36,7 @@ export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
       logger.info('[Step 04] fstab Eintrag hinzugefügt');
     }
 
-    await execAsync(`mount -o discard,defaults ${device} ${MOUNT_POINT}`, { timeout: 30_000 });
+    await safeExec('mount', ['-o', 'discard,defaults', device, MOUNT_POINT], { timeout: 30_000 });
     logger.info('[Step 04] Volume gemountet');
   }
 
@@ -67,13 +59,11 @@ export async function stepMountVolume(cfg: ProvisionConfig): Promise<void> {
 }
 
 export async function verifyMountVolume(_cfg: ProvisionConfig): Promise<void> {
-  if (!isVolumeMounted()) {
+  if (!(await isVolumeMounted())) {
     throw new Error('Volume nicht gemountet nach Setup');
   }
   for (const dir of [`${MOUNT_POINT}/postgres`, `${MOUNT_POINT}/synapse`]) {
-    try {
-      execSync(`test -d ${dir}`, { stdio: 'ignore' });
-    } catch {
+    if (!fs.existsSync(dir)) {
       throw new Error(`Verzeichnis ${dir} fehlt nach Volume-Mount`);
     }
   }

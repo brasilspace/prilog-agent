@@ -14,7 +14,7 @@ import { ensureMatrixConnectorInstalled, verifyMatrixConnectorInstalled } from '
 import { logger } from '../../utils/logger.js';
 
 export async function stepInstallMatrixConnector(cfg: ProvisionConfig): Promise<void> {
-  const result = ensureMatrixConnectorInstalled(cfg);
+  const result = await ensureMatrixConnectorInstalled(cfg);
   logger.info(`[Step connector] ${result.message}`);
 }
 

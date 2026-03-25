@@ -11,14 +11,16 @@
  *
  * Der Handler:
  *   1. Liest ProvisionConfig aus den args
- *   2. Erstellt einen Reporter (meldet Steps via WebSocket)
- *   3. Startet den Runner
- *   4. Gibt Ergebnis via agent.command_result zurück
+ *   2. Validiert mit Zod-Schema
+ *   3. Erstellt einen Reporter (meldet Steps via WebSocket)
+ *   4. Startet den Runner
+ *   5. Gibt Ergebnis via agent.command_result zurück
  */
 
-import { ProvisionCommand, ProvisionConfig, StepName } from '../provision/types.js';
+import { ProvisionConfig, StepName } from '../provision/types.js';
 import { createReporter }                               from '../provision/reporter.js';
 import { runProvision }                                 from '../provision/runner.js';
+import { validateProvisionConfig }                      from '../provision/engine/config-validator.js';
 import { logger }                                       from '../utils/logger.js';
 
 // ─── Send Function Type ───────────────────────────────────────────────────────
@@ -35,9 +37,9 @@ export async function handleProvisionCommand(
   const start = Date.now();
 
   // ── Config validieren ─────────────────────────────────────────────
-  const config = args?.config as ProvisionConfig | undefined;
+  const rawConfig = args?.config;
 
-  if (!config) {
+  if (!rawConfig) {
     logger.error('[ProvisionHandler] Kein config-Objekt in den args');
     send('agent.command_result', {
       commandId,
@@ -48,19 +50,19 @@ export async function handleProvisionCommand(
     return;
   }
 
-  // Pflichtfelder prüfen
-  const required: (keyof ProvisionConfig)[] = [
-    'orderId', 'subdomain', 'matrixDomain', 'webappDomain',
-    'dbPassword', 'registrationSecret', 'adminUsername', 'adminPasswordB64',
-    'backendApiUrl', 'agentToken',
-  ];
-
-  const missing = required.filter(k => !config[k]);
-  if (missing.length > 0) {
+  // Zod-basierte Validierung
+  let config: ProvisionConfig;
+  try {
+    config = validateProvisionConfig(rawConfig) as unknown as ProvisionConfig;
+  } catch (err: any) {
+    const message = err?.issues
+      ? err.issues.map((i: any) => `${i.path.join('.')}: ${i.message}`).join(', ')
+      : (err?.message ?? String(err));
+    logger.error(`[ProvisionHandler] Config-Validierung fehlgeschlagen: ${message}`);
     send('agent.command_result', {
       commandId,
       success: false,
-      output: `Fehlende Pflichtfelder in ProvisionConfig: ${missing.join(', ')}`,
+      output: `Config-Validierung fehlgeschlagen: ${message}`,
       duration: Date.now() - start,
     });
     return;

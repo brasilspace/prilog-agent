@@ -10,13 +10,10 @@
  * Idempotenz: Prüft ob SSL-Config bereits aktiv.
  */
 
-import { exec, execSync } from 'child_process';
-import { promisify } from 'util';
 import * as fs        from 'fs';
 import { ProvisionConfig } from '../types.js';
 import { logger }          from '../../utils/logger.js';
-
-const execAsync = promisify(exec);
+import { safeExec }        from '../engine/safe-exec.js';
 
 const CONFIG_PATH = '/etc/nginx/sites-available/prilog';
 
@@ -155,29 +152,27 @@ export async function stepConfigureNginxSsl(cfg: ProvisionConfig): Promise<void>
 
   // ── Config testen ─────────────────────────────────────────────────
   try {
-    await execAsync('nginx -t', { timeout: 10_000 });
+    await safeExec('nginx', ['-t'], { timeout: 10_000 });
   } catch (err: any) {
-    throw new Error(`Nginx Config-Test fehlgeschlagen: ${err?.stderr || err?.message}`);
+    throw new Error(`Nginx Config-Test fehlgeschlagen: ${err?.message}`);
   }
 
   // ── Nginx reloaden ────────────────────────────────────────────────
-  await execAsync('systemctl reload nginx', { timeout: 15_000 });
-  logger.info('[Step 6] Nginx mit SSL-Config reloaded ✅');
+  await safeExec('systemctl', ['reload', 'nginx'], { timeout: 15_000 });
+  logger.info('[Step 6] Nginx mit SSL-Config reloaded');
 }
 
 export async function verifyConfigureNginxSsl(cfg: ProvisionConfig): Promise<void> {
-  try {
-    execSync('nginx -t', { stdio: 'ignore', timeout: 10_000 });
-  } catch {
+  const nginxTest = await safeExec('nginx', ['-t'], { ignoreExitCode: true, timeout: 10_000 });
+  if (nginxTest.exitCode !== 0) {
     throw new Error('Nginx SSL-Konfiguration ungültig (nginx -t fehlgeschlagen)');
   }
   // HTTPS-Erreichbarkeit prüfen — jede Antwort (auch 3xx/4xx) ist OK
   for (const domain of [cfg.matrixDomain, cfg.webappDomain]) {
-    try {
-      const code = execSync(`curl -s --max-time 10 -o /dev/null -w "%{http_code}" https://${domain}`, { timeout: 15_000 }).toString().trim();
-      if (!code || code === '000') throw new Error('Keine Verbindung');
-    } catch (e: any) {
-      throw new Error(`https://${domain} nicht erreichbar nach SSL-Konfiguration: ${e.message}`);
+    const result = await safeExec('curl', ['-s', '--max-time', '10', '-o', '/dev/null', '-w', '%{http_code}', `https://${domain}`], { timeout: 15_000, ignoreExitCode: true });
+    const code = result.stdout.trim();
+    if (!code || code === '000') {
+      throw new Error(`https://${domain} nicht erreichbar nach SSL-Konfiguration: Keine Verbindung`);
     }
   }
 }
