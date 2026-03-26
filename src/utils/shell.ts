@@ -1,6 +1,8 @@
 import { spawn } from 'child_process';
 import { CommandName } from '../types.js';
 import { safeExec } from '../provision/engine/safe-exec.js';
+import { deployWebClient } from '../provision/steps/06c-deploy-web-client.js';
+import { ProvisionConfig } from '../provision/types.js';
 
 // ─── Whitelist ────────────────────────────────────────────────────────────────
 // Nur diese Befehle dürfen ausgeführt werden. Kein arbitrary shell exec.
@@ -30,6 +32,22 @@ export async function executeCommand(
   args?: Record<string, string | number | boolean>
 ): Promise<{ success: boolean; output: string; duration: number }> {
   const start = Date.now();
+
+  // ── web_client.update: spezieller Handler ──────────────────────
+  if (command === 'web_client.update') {
+    try {
+      const artifactUrl = args?.artifactUrl as string | undefined;
+      if (!artifactUrl) {
+        return { success: false, output: 'Missing required arg: artifactUrl', duration: Date.now() - start };
+      }
+      const partialConfig = { webClientArtifactUrl: artifactUrl } as ProvisionConfig;
+      await deployWebClient(partialConfig);
+      await safeExec('systemctl', ['reload', 'nginx'], { timeout: 15_000 });
+      return { success: true, output: 'Web client updated and nginx reloaded', duration: Date.now() - start };
+    } catch (err: any) {
+      return { success: false, output: err?.message ?? 'web_client.update failed', duration: Date.now() - start };
+    }
+  }
 
   const cmdDef = COMMAND_MAP[command];
   if (!cmdDef) {

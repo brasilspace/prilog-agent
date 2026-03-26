@@ -34,6 +34,12 @@ server {
         root /var/www/html;
     }
 
+    # Prilog Web Client
+    location /web/ {
+        alias /var/www/prilog-web-client/;
+        try_files $uri $uri/ /web/index.html;
+    }
+
     # Synapse proxy (ohne SSL zunächst)
     location / {
         proxy_pass http://127.0.0.1:8008;

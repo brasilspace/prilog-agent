@@ -24,6 +24,7 @@ import { stepMountVolume,       verifyMountVolume       } from './steps/04-mount
 import { stepInstallNginx,      verifyInstallNginx      } from './steps/05-install-nginx.js';
 import { stepGenerateSynapse,   verifyGenerateSynapse   } from './steps/06-generate-synapse.js';
 import { stepInstallMatrixConnector, verifyInstallMatrixConnector } from './steps/06b-install-matrix-connector.js';
+import { stepDeployWebClient,  verifyDeployWebClient  } from './steps/06c-deploy-web-client.js';
 import { stepWriteCompose,      verifyWriteCompose      } from './steps/07-write-compose.js';
 import { stepStartContainers,   verifyStartContainers   } from './steps/08-start-containers.js';
 import { stepGetSsl,            verifyGetSsl            } from './steps/09-get-ssl.js';
@@ -41,6 +42,7 @@ registry.register({ name: 'mount_volume',            fn: stepMountVolume,       
 registry.register({ name: 'install_nginx',           fn: stepInstallNginx,           verify: verifyInstallNginx       });
 registry.register({ name: 'generate_synapse',        fn: stepGenerateSynapse,        verify: verifyGenerateSynapse    });
 registry.register({ name: 'install_matrix_connector', fn: stepInstallMatrixConnector, verify: verifyInstallMatrixConnector });
+registry.register({ name: 'deploy_web_client',       fn: stepDeployWebClient,        verify: verifyDeployWebClient    });
 registry.register({ name: 'write_compose',           fn: stepWriteCompose,           verify: verifyWriteCompose       });
 registry.register({ name: 'start_containers',        fn: stepStartContainers,        verify: verifyStartContainers    });
 registry.register({ name: 'get_ssl',                 fn: stepGetSsl,                 verify: verifyGetSsl             });

@@ -100,7 +100,8 @@ export type CommandName =
   | 'agent.update'
   | 'agent.version'
   | 'provision'
-  | 'connector.install';
+  | 'connector.install'
+  | 'web_client.update';
 
 export interface ServerCommandPayload {
   commandId: string;

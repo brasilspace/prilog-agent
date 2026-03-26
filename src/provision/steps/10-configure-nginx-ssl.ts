@@ -50,6 +50,12 @@ server {
 
     client_max_body_size ${cfg.maxUploadSize}m;
 
+    # Prilog Web Client
+    location /web/ {
+        alias /var/www/prilog-web-client/;
+        try_files $uri $uri/ /web/index.html;
+    }
+
     # Matrix Client API
     location ~ ^(/_matrix|/_synapse/client) {
         proxy_pass http://127.0.0.1:8008;

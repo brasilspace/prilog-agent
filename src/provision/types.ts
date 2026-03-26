@@ -10,6 +10,7 @@ export const STEP_NAMES = [
   'install_nginx',
   'generate_synapse',
   'install_matrix_connector',
+  'deploy_web_client',
   'write_compose',
   'start_containers',
   'get_ssl',
@@ -85,6 +86,7 @@ export interface ProvisionConfig {
   backendApiUrl:      string;
   agentToken:         string;
   synapseModules?:    SynapseModulesConfig;
+  webClientArtifactUrl?: string;  // URL to download web-client build (tar.gz)
 }
 
 export interface StepResult {
