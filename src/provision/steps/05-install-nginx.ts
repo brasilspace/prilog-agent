@@ -40,6 +40,11 @@ server {
         try_files $uri $uri/ /web/index.html;
     }
 
+    # Root → Web Client redirect
+    location = / {
+        return 302 /web/;
+    }
+
     # Synapse proxy (ohne SSL zunächst)
     location / {
         proxy_pass http://127.0.0.1:8008;

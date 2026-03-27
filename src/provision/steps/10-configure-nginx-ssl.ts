@@ -56,7 +56,7 @@ server {
         try_files $uri $uri/ /web/index.html;
     }
 
-    # Matrix Client API
+    # Matrix Client + Federation API
     location ~ ^(/_matrix|/_synapse/client) {
         proxy_pass http://127.0.0.1:8008;
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -65,7 +65,12 @@ server {
         proxy_read_timeout 600s;
     }
 
-    # Matrix Federation API (Port 8448 auf 443 forwarden)
+    # Root → Web Client redirect
+    location = / {
+        return 302 /web/;
+    }
+
+    # Everything else → Synapse (Federation etc.)
     location / {
         proxy_pass http://127.0.0.1:8008;
         proxy_set_header X-Forwarded-For $remote_addr;
