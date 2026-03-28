@@ -28,6 +28,7 @@ const provisionConfigSchema = z.object({
   backendApiUrl:      z.string().url(),
   agentToken:         z.string().min(1),
   synapseModules:     z.any().optional(),  // Validated separately if present
+  webClientArtifactUrl: z.string().url().optional(),
 });
 
 export type ValidatedProvisionConfig = z.infer<typeof provisionConfigSchema>;
