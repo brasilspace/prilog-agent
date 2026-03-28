@@ -82,6 +82,12 @@ export function safeExec(
 
     child.on('error', (err) => {
       if (timer) clearTimeout(timer);
+      // ENOENT = binary not found — treat like exit code 127 if ignoreExitCode
+      if (options?.ignoreExitCode && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+        logger.debug(`[safe-exec] ${command} not found (ENOENT) — treated as exitCode 127`);
+        resolve({ stdout: '', stderr: err.message, exitCode: 127 });
+        return;
+      }
       logger.error(`[safe-exec] spawn error: ${err.message}`);
       reject(new Error(`Failed to spawn "${command}": ${err.message}`));
     });
