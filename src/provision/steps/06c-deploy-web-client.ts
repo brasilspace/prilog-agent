@@ -29,12 +29,17 @@ export async function deployWebClient(config: ProvisionConfig): Promise<void> {
 
   // ── Artifact herunterladen ───────────────────────────────────────
   logger.info('[Step 06c] Lade Web-Client Artifact herunter...');
-  await safeExec('curl', [
-    '-fSL',
-    '--max-time', '120',
-    '-o', ARTIFACT_TMP,
-    artifactUrl,
-  ], { timeout: 130_000 });
+  const curlArgs = ['-fSL', '--max-time', '120', '-o', ARTIFACT_TMP];
+
+  // Shared Secret für authentifizierten Download über Backend
+  const sharedSecret = config.synapseModules?.connector?.config?.sharedSecret;
+  if (sharedSecret) {
+    curlArgs.push('-H', `x-matrix-connector-secret: ${sharedSecret}`);
+  }
+
+  curlArgs.push(artifactUrl);
+
+  await safeExec('curl', curlArgs, { timeout: 130_000 });
   logger.info('[Step 06c] Artifact heruntergeladen');
 
   // ── Entpacken (dist/ Inhalt nach /var/www/prilog-web-client/) ───
