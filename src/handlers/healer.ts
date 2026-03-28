@@ -28,7 +28,6 @@ export interface HealEvent {
 
 const COMPOSE_PATHS = [
   '/opt/prilog/docker-compose.yml',
-  '/opt/synapse/docker-compose.yml',
 ];
 
 function getComposePath(): string | null {

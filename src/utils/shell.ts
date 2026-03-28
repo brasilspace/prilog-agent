@@ -13,16 +13,16 @@ interface CommandDef {
 }
 
 const COMMAND_MAP: Partial<Record<CommandName, CommandDef>> = {
-  'synapse.restart':      { command: 'docker', args: () => ['compose', '-f', '/opt/synapse/docker-compose.yml', 'restart', 'synapse'] },
-  'synapse.reload':       { command: 'docker', args: () => ['compose', '-f', '/opt/synapse/docker-compose.yml', 'kill', '-s', 'HUP', 'synapse'] },
-  'synapse.status':       { command: 'docker', args: () => ['compose', '-f', '/opt/synapse/docker-compose.yml', 'ps', 'synapse'] },
+  'synapse.restart':      { command: 'docker', args: () => ['compose', '-f', '/opt/prilog/docker-compose.yml', 'restart', 'synapse'] },
+  'synapse.reload':       { command: 'docker', args: () => ['compose', '-f', '/opt/prilog/docker-compose.yml', 'kill', '-s', 'HUP', 'synapse'] },
+  'synapse.status':       { command: 'docker', args: () => ['compose', '-f', '/opt/prilog/docker-compose.yml', 'ps', 'synapse'] },
   'docker.ps':            { command: 'docker', args: () => ['ps', '--format', 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'] },
   'docker.logs':          { command: 'docker', args: (a) => ['logs', '--tail', String(a?.lines ?? 100), String(a?.container ?? 'synapse')] },
-  'module.enable':        { command: 'docker', args: (a) => ['compose', '-f', `/opt/synapse/modules/${a?.module}/docker-compose.yml`, 'up', '-d'] },
-  'module.disable':       { command: 'docker', args: (a) => ['compose', '-f', `/opt/synapse/modules/${a?.module}/docker-compose.yml`, 'down'] },
+  'module.enable':        { command: 'docker', args: (a) => ['compose', '-f', `/opt/prilog/modules/${a?.module}/docker-compose.yml`, 'up', '-d'] },
+  'module.disable':       { command: 'docker', args: (a) => ['compose', '-f', `/opt/prilog/modules/${a?.module}/docker-compose.yml`, 'down'] },
   'module.status':        { command: 'docker', args: () => ['ps', '--filter', 'label=prilog.module', '--format', '{{.Names}}\t{{.Status}}'] },
-  'system.status':        { command: 'bash',   args: () => ['-c', 'uptime && free -m && df -h /opt/synapse'] },
-  'system.df':            { command: 'df',     args: () => ['-h', '/opt/synapse/data'] },
+  'system.status':        { command: 'bash',   args: () => ['-c', 'uptime && free -m && df -h /mnt/prilog-data'] },
+  'system.df':            { command: 'df',     args: () => ['-h', '/mnt/prilog-data'] },
   'agent.update':         { command: 'bash',   args: () => ['-c', 'cd /opt/prilog-agent && git pull && npm run build && sudo systemctl restart prilog-agent'] },
   'agent.version':        { command: 'bash',   args: () => ['-c', 'cat /opt/prilog-agent/package.json | grep version'] },
 };

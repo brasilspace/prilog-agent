@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { ModuleInfo } from '../types.js';
 import { logger } from '../utils/logger.js';
 
-const MODULES_DIR = '/opt/synapse/modules';
+const MODULES_DIR = '/opt/prilog/modules';
 
 // ─── Verfügbare Module entdecken ─────────────────────────────────────────────
 

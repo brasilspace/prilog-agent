@@ -41,7 +41,7 @@ function getRamMetrics(): { ramTotal: number; ramUsed: number; ramPct: number } 
 // ─── Disk ─────────────────────────────────────────────────────────────────────
 
 function getDiskMetrics(): { diskTotal: number; diskUsed: number; diskPct: number } {
-  const paths = ['/opt/synapse/data', '/mnt/synapse-data', '/'];
+  const paths = ['/mnt/prilog-data', '/'];
   for (const p of paths) {
     try {
       const out = execSync(`df -k ${p} --output=size,used,pcent | tail -1`).toString().trim();
@@ -76,7 +76,7 @@ async function getSynapseMetrics(): Promise<{ userCount: number; up: boolean }> 
 // ─── Volume Usage ─────────────────────────────────────────────────────────────
 
 function getVolumeUsage(): number {
-  const paths = ['/mnt/synapse-data', '/opt/synapse/data', '/'];
+  const paths = ['/mnt/prilog-data', '/'];
   for (const p of paths) {
     try {
       const out = execSync(`df -k ${p} --output=pcent | tail -1`).toString().trim();

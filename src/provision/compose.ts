@@ -4,7 +4,7 @@ import { ProvisionConfig } from './types.js';
 
 export const COMPOSE_DIR = '/opt/prilog';
 export const COMPOSE_PATH = `${COMPOSE_DIR}/docker-compose.yml`;
-export const CONNECTOR_HOST_DIR = '/opt/synapse/connectors/prilog-matrix-connector';
+export const CONNECTOR_HOST_DIR = '/opt/prilog/connectors/prilog-matrix-connector';
 export const CONNECTOR_CONTAINER_DIR = '/modules/prilog-matrix-connector';
 
 function buildSynapsePortBinding(cfg: ProvisionConfig): string {

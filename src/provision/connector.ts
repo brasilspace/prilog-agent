@@ -28,7 +28,7 @@ async function ensureGitCheckout(repo: string, ref: string): Promise<void> {
   const isGithubSshRepo = repo.startsWith('git@github.com:');
 
   if (!fs.existsSync(CONNECTOR_HOST_DIR)) {
-    fs.mkdirSync('/opt/synapse/connectors', { recursive: true });
+    fs.mkdirSync('/opt/prilog/connectors', { recursive: true });
     try {
       await safeExec('git', ['clone', '--depth', '1', '--branch', ref, repo, CONNECTOR_HOST_DIR], { timeout: 120_000 });
     } catch (error) {
@@ -61,7 +61,7 @@ async function ensureGitCheckout(repo: string, ref: string): Promise<void> {
 }
 
 async function ensureArtifactExtracted(url: string, sharedSecret?: string): Promise<void> {
-  fs.mkdirSync('/opt/synapse/connectors', { recursive: true });
+  fs.mkdirSync('/opt/prilog/connectors', { recursive: true });
   if (fs.existsSync(CONNECTOR_HOST_DIR)) {
     fs.rmSync(CONNECTOR_HOST_DIR, { recursive: true, force: true });
   }

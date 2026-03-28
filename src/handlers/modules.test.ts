@@ -50,9 +50,9 @@ describe('discoverModules', () => {
   it('returns only directories that contain docker-compose.yml', () => {
     existsSyncMock.mockImplementation((path: fs.PathLike) => {
       const p = path.toString();
-      if (p === '/opt/synapse/modules') return true;
-      if (p === '/opt/synapse/modules/bridge-telegram/docker-compose.yml') return true;
-      if (p === '/opt/synapse/modules/bridge-whatsapp/docker-compose.yml') return false;
+      if (p === '/opt/prilog/modules') return true;
+      if (p === '/opt/prilog/modules/bridge-telegram/docker-compose.yml') return true;
+      if (p === '/opt/prilog/modules/bridge-whatsapp/docker-compose.yml') return false;
       return false;
     });
     readdirSyncMock.mockReturnValue(['bridge-telegram', 'bridge-whatsapp'] as any);
