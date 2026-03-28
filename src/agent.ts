@@ -234,7 +234,7 @@ export class PrilogAgent {
           return;
         }
 
-        const result = ensureMatrixConnectorInstalled(connectorConfig, {
+        const result = await ensureMatrixConnectorInstalled(connectorConfig, {
           refreshCompose: true,
           restartSynapse: true,
         });
