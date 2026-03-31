@@ -50,12 +50,6 @@ server {
 
     client_max_body_size ${cfg.maxUploadSize}m;
 
-    # Prilog Web Client
-    location /web/ {
-        alias /var/www/prilog-web-client/;
-        try_files $uri $uri/ /web/index.html;
-    }
-
     # Matrix Client + Federation API
     location ~ ^(/_matrix|/_synapse/client) {
         proxy_pass http://127.0.0.1:8008;
@@ -65,18 +59,11 @@ server {
         proxy_read_timeout 600s;
     }
 
-    # Root → Web Client redirect
-    location = / {
-        return 302 /web/;
-    }
-
-    # Everything else → Synapse (Federation etc.)
+    # Prilog Web Client (SPA fallback)
+    root /var/www/prilog-web-client;
+    index index.html;
     location / {
-        proxy_pass http://127.0.0.1:8008;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header Host $host;
-        proxy_read_timeout 600s;
+        try_files $uri $uri/ /index.html;
     }
 }
 

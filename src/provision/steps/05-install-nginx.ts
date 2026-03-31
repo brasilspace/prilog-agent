@@ -34,23 +34,19 @@ server {
         root /var/www/html;
     }
 
-    # Prilog Web Client
-    location /web/ {
-        alias /var/www/prilog-web-client/;
-        try_files $uri $uri/ /web/index.html;
-    }
-
-    # Root → Web Client redirect
-    location = / {
-        return 302 /web/;
-    }
-
-    # Synapse proxy (ohne SSL zunächst)
-    location / {
+    # Matrix Client + Federation API
+    location ~ ^(/_matrix|/_synapse/client) {
         proxy_pass http://127.0.0.1:8008;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto http;
         proxy_set_header Host $host;
+    }
+
+    # Prilog Web Client (SPA fallback)
+    root /var/www/prilog-web-client;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 }
 `;
