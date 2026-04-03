@@ -59,6 +59,28 @@ server {
         proxy_read_timeout 600s;
     }
 
+    # Platform API proxy to central backend
+    location /api/ {
+        proxy_pass https://api.prilog.chat/api/;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_ssl_server_name on;
+        proxy_read_timeout 30s;
+    }
+
+    # MinIO S3 proxy for presigned URLs
+    location /s3/ {
+        rewrite ^/s3/(.*) /$1 break;
+        proxy_pass http://127.0.0.1:9000;
+        proxy_set_header Host ${cfg.matrixDomain};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        client_max_body_size 200m;
+    }
+
     # Prilog Web Client (SPA fallback)
     root /var/www/prilog-web-client;
     index index.html;
