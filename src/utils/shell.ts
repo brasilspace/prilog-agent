@@ -23,7 +23,7 @@ const COMMAND_MAP: Partial<Record<CommandName, CommandDef>> = {
   'module.status':        { command: 'docker', args: () => ['ps', '--filter', 'label=prilog.module', '--format', '{{.Names}}\t{{.Status}}'] },
   'system.status':        { command: 'bash',   args: () => ['-c', 'uptime && free -m && df -h /mnt/prilog-data'] },
   'system.df':            { command: 'df',     args: () => ['-h', '/mnt/prilog-data'] },
-  'agent.update':         { command: 'bash',   args: () => ['-c', 'cd /opt/prilog-agent && git pull && npm run build && sudo systemctl restart prilog-agent'] },
+  'agent.update':         { command: 'bash',   args: () => ['-c', 'cd /opt/prilog-agent && git pull && sudo systemctl restart prilog-agent'] },
   'agent.version':        { command: 'bash',   args: () => ['-c', 'cat /opt/prilog-agent/package.json | grep version'] },
 };
 
