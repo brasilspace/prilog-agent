@@ -40,7 +40,11 @@ export async function executeCommand(
       if (!artifactUrl) {
         return { success: false, output: 'Missing required arg: artifactUrl', duration: Date.now() - start };
       }
-      const partialConfig = { webClientArtifactUrl: artifactUrl } as ProvisionConfig;
+      const sharedSecret = args?.sharedSecret as string | undefined;
+      const partialConfig = {
+        webClientArtifactUrl: artifactUrl,
+        ...(sharedSecret ? { synapseModules: { connector: { config: { sharedSecret } } } } : {}),
+      } as ProvisionConfig;
       await deployWebClient(partialConfig);
       await safeExec('systemctl', ['reload', 'nginx'], { timeout: 15_000 });
       return { success: true, output: 'Web client updated and nginx reloaded', duration: Date.now() - start };
