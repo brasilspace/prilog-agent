@@ -76,6 +76,32 @@ export async function stepInstallNginx(cfg: ProvisionConfig): Promise<void> {
   fs.writeFileSync(configPath, config, 'utf-8');
   logger.info('[Step 1] HTTP-Config geschrieben');
 
+  // ── MIME-Types patchen: .mjs als application/javascript ────────────
+  // Nginx's Standard-mime.types mappt .mjs nicht. Ohne diesen Patch werden
+  // ES-Module-Worker (z.B. der PDF.js-Worker fuer die PDF-Vorschau im Chat)
+  // mit content-type: application/octet-stream ausgeliefert — und der
+  // Browser lehnt ab, weil Module-Worker JavaScript-MIME brauchen.
+  // Der Patch ist idempotent: wir fuegen "mjs" nur hinzu wenn's fehlt.
+  try {
+    const mimeTypesPath = '/etc/nginx/mime.types';
+    if (fs.existsSync(mimeTypesPath)) {
+      const mime = fs.readFileSync(mimeTypesPath, 'utf-8');
+      if (!/application\/javascript\s+[^;]*\bmjs\b/.test(mime)) {
+        const patched = mime.replace(
+          /(application\/javascript\s+)([^;]*?);/,
+          '$1$2 mjs;',
+        );
+        if (patched !== mime) {
+          fs.writeFileSync(mimeTypesPath, patched, 'utf-8');
+          logger.info('[Step 1] mime.types: .mjs → application/javascript hinzugefuegt');
+        }
+      }
+    }
+  } catch (err) {
+    // Nicht-kritisch, loggen und weiter
+    logger.warn('[Step 1] mime.types Patch fehlgeschlagen', { err });
+  }
+
   // ── Site aktivieren ───────────────────────────────────────────────
   const enabledPath = '/etc/nginx/sites-enabled/prilog';
   if (!fs.existsSync(enabledPath)) {
