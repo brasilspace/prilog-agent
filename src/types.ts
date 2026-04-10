@@ -88,6 +88,7 @@ export type CommandName =
   | 'synapse.restart'
   | 'synapse.reload'
   | 'synapse.status'
+  | 'synapse.set_upload_size'
   | 'docker.ps'
   | 'docker.logs'
   | 'module.enable'
