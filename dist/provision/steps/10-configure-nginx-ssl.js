@@ -91,6 +91,24 @@ server {
         proxy_read_timeout 600s;
     }
 
+    # SSE-Stream fuer Echtzeit-Events — muss VOR /api/ stehen (spezifischer).
+    # Erfordert lange Timeouts, kein Buffering, HTTP/1.1 keep-alive.
+    location /api/platform/v1/workflow/events/stream {
+        proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_ssl_server_name on;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 24h;
+        proxy_send_timeout 24h;
+    }
+
     # Platform API proxy to central backend
     location /api/ {
         proxy_pass https://api.prilog.chat/api/;
