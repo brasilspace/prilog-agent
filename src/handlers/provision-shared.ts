@@ -348,12 +348,17 @@ server {
         const nonceResult = await safeExec('curl', ['-sf', `http://127.0.0.1:${config.synapsePort}/_synapse/admin/v1/register`]);
         const nonce = JSON.parse(nonceResult.stdout).nonce;
 
-        // HMAC berechnen: nonce\0username\0password\0admin
-        const hmacInput = `${nonce}\0${config.adminUsername}\0${config.adminPassword}\0admin`;
-        const hmacResult = await safeExec('bash', ['-c',
-          `printf '%s' '${hmacInput}' | openssl dgst -sha1 -hmac '${config.registrationSecret}' | awk '{print $2}'`
-        ]);
-        const mac = hmacResult.stdout.trim();
+        // HMAC in Node.js berechnen (Null-Bytes funktionieren nicht in Shell-Args)
+        const crypto = await import('crypto');
+        const hmac = crypto.createHmac('sha1', config.registrationSecret);
+        hmac.update(nonce);
+        hmac.update('\0');
+        hmac.update(config.adminUsername!);
+        hmac.update('\0');
+        hmac.update(config.adminPassword!);
+        hmac.update('\0');
+        hmac.update('admin');
+        const mac = hmac.digest('hex');
 
         // User registrieren
         const regBody = JSON.stringify({
