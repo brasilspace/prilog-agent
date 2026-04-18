@@ -389,6 +389,7 @@ server {
       success: true,
       output: `Shared-Tenant ${config.slug} provisioniert (Port ${config.synapsePort})`,
       duration: Date.now() - start,
+      sharedTenantOrderId: config.orderId,
     });
 
   } catch (err: unknown) {
