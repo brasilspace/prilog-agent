@@ -32,6 +32,8 @@ const SharedTenantConfigSchema = z.object({
   webClientRoot:      z.string().default('/var/www/prilog-web-client'),
   backendApiUrl:      z.string(),
   agentToken:         z.string().optional(),
+  adminUsername:      z.string().optional(),
+  adminPassword:      z.string().optional(),
 });
 
 type SharedTenantConfig = z.infer<typeof SharedTenantConfigSchema>;
@@ -76,6 +78,26 @@ export async function handleSharedTenantCreate(
   logger.info(`[SharedTenant] Starte Provisioning fuer ${config.slug} (Port ${config.synapsePort})`);
 
   try {
+    // ── Step 0: PostgreSQL fuer Docker-Zugriff konfigurieren ─────
+    report('configure_postgres', 'running');
+    // pg_hba: Docker-Netzwerke erlauben (172.x.x.x)
+    const pgHbaCheck = await safeExec('bash', ['-c',
+      `PG_HBA=$(find /etc/postgresql -name pg_hba.conf | head -1) && grep -q '172.0.0.0/8' "$PG_HBA" && echo 'EXISTS' || echo 'MISSING'`
+    ]);
+    if (pgHbaCheck.stdout.trim() === 'MISSING') {
+      await safeExec('bash', ['-c',
+        `PG_HBA=$(find /etc/postgresql -name pg_hba.conf | head -1) && echo 'host all all 172.0.0.0/8 scram-sha-256' >> "$PG_HBA"`
+      ]);
+      // listen_addresses: Docker-Bridge hinzufuegen
+      await safeExec('bash', ['-c',
+        `PG_CONF=$(find /etc/postgresql -name postgresql.conf | head -1) && ` +
+        `grep -q '172.17.0.1' "$PG_CONF" || ` +
+        `sed -i "s/listen_addresses = '\\(.*\\)'/listen_addresses = '\\1,172.17.0.1'/" "$PG_CONF"`
+      ]);
+      await safeExec('systemctl', ['restart', 'postgresql']);
+    }
+    report('configure_postgres', 'success');
+
     // ── Step 1: PostgreSQL-Datenbank ──────────────────────────────
     report('create_database', 'running');
     await safeExec('sudo', [
@@ -317,6 +339,43 @@ server {
     await safeExec('bash', ['-c', `cat > ${tenantDir}/credentials.env << 'CREDS'\n${credContent}\nCREDS`]);
     await safeExec('chmod', ['600', `${tenantDir}/credentials.env`]);
     report('save_credentials', 'success');
+
+    // ── Step 8: Admin-User erstellen ───────────────────────────
+    if (config.adminUsername && config.adminPassword) {
+      report('create_admin_user', 'running');
+      try {
+        // Nonce holen
+        const nonceResult = await safeExec('curl', ['-sf', `http://127.0.0.1:${config.synapsePort}/_synapse/admin/v1/register`]);
+        const nonce = JSON.parse(nonceResult.stdout).nonce;
+
+        // HMAC berechnen: nonce\0username\0password\0admin
+        const hmacInput = `${nonce}\0${config.adminUsername}\0${config.adminPassword}\0admin`;
+        const hmacResult = await safeExec('bash', ['-c',
+          `printf '%s' '${hmacInput}' | openssl dgst -sha1 -hmac '${config.registrationSecret}' | awk '{print $2}'`
+        ]);
+        const mac = hmacResult.stdout.trim();
+
+        // User registrieren
+        const regBody = JSON.stringify({
+          nonce,
+          username: config.adminUsername,
+          password: config.adminPassword,
+          admin: true,
+          mac,
+        });
+        await safeExec('curl', [
+          '-sf', '-X', 'POST',
+          `http://127.0.0.1:${config.synapsePort}/_synapse/admin/v1/register`,
+          '-H', 'Content-Type: application/json',
+          '-d', regBody,
+        ]);
+        report('create_admin_user', 'success', `Admin: @${config.adminUsername}:${config.domain}`);
+      } catch (err: any) {
+        // Nicht fatal — User kann auch manuell erstellt werden
+        report('create_admin_user', 'error', `Admin-User Fehler: ${err.message}`);
+        logger.warn(`[SharedTenant] Admin-User Erstellung fehlgeschlagen: ${err.message}`);
+      }
+    }
 
     // ── Fertig ───────────────────────────────────────────────────
     logger.info(`[SharedTenant] ${config.slug} erfolgreich provisioniert`);
