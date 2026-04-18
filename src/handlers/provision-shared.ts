@@ -32,8 +32,8 @@ const SharedTenantConfigSchema = z.object({
   webClientRoot:      z.string().default('/var/www/prilog-web-client'),
   backendApiUrl:      z.string(),
   agentToken:         z.string().optional(),
-  adminUsername:      z.string().optional(),
-  adminPassword:      z.string().optional(),
+  adminUsername:      z.string().nullish(),
+  adminPassword:      z.string().nullish(),
 });
 
 type SharedTenantConfig = z.infer<typeof SharedTenantConfigSchema>;
