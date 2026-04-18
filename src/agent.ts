@@ -5,6 +5,7 @@ import { getModuleStatus, enableModule, disableModule } from './handlers/modules
 import { executeCommand, spawnLogStream } from './utils/shell.js';
 import { runHealthCheck, HealEvent } from './handlers/healer.js';
 import { handleProvisionCommand } from './handlers/provision.js';
+import { handleSharedTenantCreate } from './handlers/provision-shared.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
 import { ProvisionConfig } from './provision/types.js';
 import { ServerCommandPayload, LogChunkPayload } from './types.js';
@@ -147,6 +148,30 @@ export class PrilogAgent {
 
         // Async starten — nicht awaiten damit WebSocket nicht blockiert wird
         handleProvisionCommand(
+          commandId,
+          args as Record<string, unknown> ?? {},
+          (type, payload) => this.transport.send(type as any, payload)
+        ).finally(() => {
+          this.provisionRunning = false;
+        });
+
+        return;
+      }
+
+      // ── Shared-Tenant Provisioning ──────────────────────────────────────────
+      if (command === 'shared_tenant.create') {
+        if (this.provisionRunning) {
+          this.transport.send('agent.command_result', {
+            commandId,
+            success: false,
+            output: 'Provisioning läuft bereits — bitte warten',
+            duration: Date.now() - start,
+          });
+          return;
+        }
+
+        this.provisionRunning = true;
+        handleSharedTenantCreate(
           commandId,
           args as Record<string, unknown> ?? {},
           (type, payload) => this.transport.send(type as any, payload)

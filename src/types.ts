@@ -101,6 +101,7 @@ export type CommandName =
   | 'agent.update'
   | 'agent.version'
   | 'provision'
+  | 'shared_tenant.create'
   | 'connector.install'
   | 'web_client.update';
 
