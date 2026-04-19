@@ -215,7 +215,7 @@ services:
     container_name: synapse-${config.slug}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${config.synapsePort}:8008"
+      - "0.0.0.0:${config.synapsePort}:8008"
     volumes:
       - ./homeserver.yaml:/data/homeserver.yaml:ro
       - ./signing.key:/data/signing.key:ro
