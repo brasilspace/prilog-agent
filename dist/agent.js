@@ -8,6 +8,7 @@ const modules_js_1 = require("./handlers/modules.js");
 const shell_js_1 = require("./utils/shell.js");
 const healer_js_1 = require("./handlers/healer.js");
 const provision_js_1 = require("./handlers/provision.js");
+const provision_shared_js_1 = require("./handlers/provision-shared.js");
 const connector_js_1 = require("./provision/connector.js");
 const logger_js_1 = require("./utils/logger.js");
 class PrilogAgent {
@@ -127,6 +128,23 @@ class PrilogAgent {
                 this.provisionRunning = true;
                 // Async starten — nicht awaiten damit WebSocket nicht blockiert wird
                 (0, provision_js_1.handleProvisionCommand)(commandId, args ?? {}, (type, payload) => this.transport.send(type, payload)).finally(() => {
+                    this.provisionRunning = false;
+                });
+                return;
+            }
+            // ── Shared-Tenant Provisioning ──────────────────────────────────────────
+            if (command === 'shared_tenant.create') {
+                if (this.provisionRunning) {
+                    this.transport.send('agent.command_result', {
+                        commandId,
+                        success: false,
+                        output: 'Provisioning läuft bereits — bitte warten',
+                        duration: Date.now() - start,
+                    });
+                    return;
+                }
+                this.provisionRunning = true;
+                (0, provision_shared_js_1.handleSharedTenantCreate)(commandId, args ?? {}, (type, payload) => this.transport.send(type, payload)).finally(() => {
                     this.provisionRunning = false;
                 });
                 return;

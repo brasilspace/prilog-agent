@@ -31,7 +31,7 @@ const SharedTenantConfigSchema = z.object({
   wildcardCertPath:   z.string().default('/etc/letsencrypt/live/wildcard.prilog.team'),
   webClientRoot:      z.string().default('/var/www/prilog-web-client'),
   backendApiUrl:      z.string(),
-  agentToken:         z.string().optional(),
+  agentToken:         z.string().nullish(),
   adminUsername:      z.string().nullish(),
   adminPassword:      z.string().nullish(),
 });
@@ -289,9 +289,38 @@ server {
         return 200 '{"m.homeserver": {"base_url": "https://${config.domain}"}}';
     }
 
+    # Platform API → zentrales Backend
+    location /api/ {
+        proxy_pass https://api.prilog.chat/api/;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-Tenant ${config.domain};
+        proxy_ssl_server_name on;
+    }
+
+    # SSE Stream — kein Buffering
+    location /api/platform/v1/workflow/events/stream {
+        proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-Tenant ${config.domain};
+        proxy_ssl_server_name on;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
     location / {
         root ${config.webClientRoot};
         try_files $uri $uri/ /index.html;
+
+        # index.html nie cachen (Service Worker + neue Deploys)
+        location = /index.html {
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+        }
     }
 }
 
