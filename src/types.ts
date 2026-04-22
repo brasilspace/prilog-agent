@@ -98,6 +98,7 @@ export type CommandName =
   | 'logs.stream.stop'
   | 'system.status'
   | 'system.df'
+  | 'system.health'
   | 'agent.update'
   | 'agent.version'
   | 'provision'

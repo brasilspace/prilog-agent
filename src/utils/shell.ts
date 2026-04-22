@@ -90,6 +90,128 @@ export async function executeCommand(
     }
   }
 
+  // ── system.health: umfassender Server-Wartungs-Check ───────────
+  if (command === 'system.health') {
+    try {
+      const checks: Record<string, { status: string; message: string; value?: string | number }> = {};
+
+      // 1. Disk-Nutzung
+      try {
+        const df = await safeExec('bash', ['-c', "df -h / | tail -1 | awk '{print $5, $4}'"], { timeout: 5_000 });
+        const [usedPercent, available] = df.stdout.trim().split(' ');
+        const pct = parseInt(usedPercent);
+        checks.disk = {
+          status: pct > 90 ? 'error' : pct > 80 ? 'warning' : 'ok',
+          message: `${usedPercent} belegt, ${available} frei`,
+          value: pct,
+        };
+      } catch { checks.disk = { status: 'error', message: 'df fehlgeschlagen' }; }
+
+      // 2. SSL-Zertifikat Ablauf
+      try {
+        const ssl = await safeExec('bash', ['-c',
+          "for cert in /etc/letsencrypt/live/*/cert.pem; do " +
+          "domain=$(basename $(dirname $cert)); " +
+          "expiry=$(openssl x509 -enddate -noout -in $cert 2>/dev/null | cut -d= -f2); " +
+          "echo \"$domain|$expiry\"; done"
+        ], { timeout: 10_000 });
+        const certs = ssl.stdout.trim().split('\n').filter(Boolean).map(line => {
+          const [domain, expiry] = line.split('|');
+          const expiryDate = new Date(expiry);
+          const daysLeft = Math.floor((expiryDate.getTime() - Date.now()) / 86400000);
+          return { domain, daysLeft };
+        });
+        const minDays = Math.min(...certs.map(c => c.daysLeft));
+        const expiringSoon = certs.filter(c => c.daysLeft < 14);
+        checks.ssl = {
+          status: minDays < 7 ? 'error' : minDays < 14 ? 'warning' : 'ok',
+          message: expiringSoon.length > 0
+            ? `${expiringSoon.map(c => `${c.domain}: ${c.daysLeft}d`).join(', ')}`
+            : `Alle Zertifikate OK (min ${minDays} Tage)`,
+          value: minDays,
+        };
+      } catch { checks.ssl = { status: 'warning', message: 'SSL-Check fehlgeschlagen' }; }
+
+      // 3. OS-Updates ausstehend
+      try {
+        const updates = await safeExec('bash', ['-c',
+          "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0"
+        ], { timeout: 15_000 });
+        const count = parseInt(updates.stdout.trim()) || 0;
+        const security = await safeExec('bash', ['-c',
+          "apt list --upgradable 2>/dev/null | grep -i security | wc -l || echo 0"
+        ], { timeout: 15_000 });
+        const secCount = parseInt(security.stdout.trim()) || 0;
+        checks.osUpdates = {
+          status: secCount > 0 ? 'warning' : count > 20 ? 'warning' : 'ok',
+          message: `${count} Updates (${secCount} Sicherheit)`,
+          value: count,
+        };
+      } catch { checks.osUpdates = { status: 'warning', message: 'apt check fehlgeschlagen' }; }
+
+      // 4. Docker-Container Status
+      try {
+        const docker = await safeExec('docker', ['ps', '--format', '{{.Names}}|{{.Status}}'], { timeout: 10_000 });
+        const containers = docker.stdout.trim().split('\n').filter(Boolean).map(line => {
+          const [name, status] = line.split('|');
+          return { name, status, healthy: status?.includes('Up') };
+        });
+        const unhealthy = containers.filter(c => !c.healthy);
+        checks.docker = {
+          status: unhealthy.length > 0 ? 'error' : 'ok',
+          message: unhealthy.length > 0
+            ? `${unhealthy.map(c => c.name).join(', ')} nicht gesund`
+            : `${containers.length} Container laufen`,
+          value: containers.length,
+        };
+      } catch { checks.docker = { status: 'warning', message: 'Docker check fehlgeschlagen' }; }
+
+      // 5. Synapse-Version
+      try {
+        const ver = await safeExec('bash', ['-c',
+          "curl -s http://127.0.0.1:8008/_synapse/admin/v1/server_version 2>/dev/null"
+        ], { timeout: 10_000 });
+        const parsed = JSON.parse(ver.stdout);
+        checks.synapseVersion = {
+          status: 'ok',
+          message: `Synapse ${parsed.server_version}`,
+          value: parsed.server_version,
+        };
+      } catch { checks.synapseVersion = { status: 'warning', message: 'Synapse-Version nicht abrufbar' }; }
+
+      // 6. Backup-Alter (letztes Backup pruefen)
+      try {
+        const backup = await safeExec('bash', ['-c',
+          "ls -t /mnt/prilog-data/backups/*.sql.gz /mnt/prilog-data/backups/*.tar.gz " +
+          "/var/backups/prilog* 2>/dev/null | head -1 | xargs -I{} stat -c '%Y %n' {} 2>/dev/null || echo '0 none'"
+        ], { timeout: 10_000 });
+        const [tsStr, file] = backup.stdout.trim().split(' ', 2);
+        const ts = parseInt(tsStr);
+        if (ts === 0) {
+          checks.backup = { status: 'error', message: 'Kein Backup gefunden' };
+        } else {
+          const ageHours = Math.floor((Date.now() / 1000 - ts) / 3600);
+          checks.backup = {
+            status: ageHours > 48 ? 'error' : ageHours > 24 ? 'warning' : 'ok',
+            message: `Letztes Backup: ${ageHours}h alt (${file})`,
+            value: ageHours,
+          };
+        }
+      } catch { checks.backup = { status: 'warning', message: 'Backup-Check fehlgeschlagen' }; }
+
+      const overall = Object.values(checks).some(c => c.status === 'error') ? 'error'
+        : Object.values(checks).some(c => c.status === 'warning') ? 'warning' : 'ok';
+
+      return {
+        success: true,
+        output: JSON.stringify({ overall, checks }),
+        duration: Date.now() - start,
+      };
+    } catch (err: any) {
+      return { success: false, output: err?.message ?? 'system.health failed', duration: Date.now() - start };
+    }
+  }
+
   // ── web_client.update: spezieller Handler ──────────────────────
   if (command === 'web_client.update') {
     try {

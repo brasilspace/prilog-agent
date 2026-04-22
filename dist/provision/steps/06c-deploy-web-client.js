@@ -69,6 +69,12 @@ async function deployWebClient(config) {
     curlArgs.push(artifactUrl);
     await (0, safe_exec_js_1.safeExec)('curl', curlArgs, { timeout: 130_000 });
     logger_js_1.logger.info('[Step 06c] Artifact heruntergeladen');
+    // ── Alte Assets aufraeumen (verhindert Anhaeufung alter Build-Dateien) ───
+    const assetsDir = `${WEB_CLIENT_DIR}/assets`;
+    if (fs.existsSync(assetsDir)) {
+        await (0, safe_exec_js_1.safeExec)('rm', ['-rf', assetsDir], { timeout: 10_000 });
+        logger_js_1.logger.info('[Step 06c] Alte Assets entfernt');
+    }
     // ── Entpacken (dist/ Inhalt nach /var/www/prilog-web-client/) ───
     await (0, safe_exec_js_1.safeExec)('tar', [
         '-xzf', ARTIFACT_TMP,
