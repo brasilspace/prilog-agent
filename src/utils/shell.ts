@@ -199,6 +199,38 @@ export async function executeCommand(
         }
       } catch { checks.backup = { status: 'warning', message: 'Backup-Check fehlgeschlagen' }; }
 
+      // 7. Prilog-Versionen (Web-Client + Agent)
+      try {
+        const parts: string[] = [];
+        // Web-Client Build-Hash aus index.html
+        try {
+          const wcHash = await safeExec('bash', ['-c',
+            "grep -oP 'index-[a-zA-Z0-9_-]+\\.js' /var/www/prilog-web-client/index.html | head -1"
+          ], { timeout: 5_000 });
+          const hash = wcHash.stdout.trim().replace('index-', '').replace('.js', '');
+          if (hash) parts.push(`Web-Client: ${hash}`);
+        } catch { /* ignore */ }
+        // Agent-Version aus package.json
+        try {
+          const agentVer = await safeExec('bash', ['-c',
+            "cat /opt/prilog-agent/package.json /opt/prilog/agent/package.json 2>/dev/null | grep '\"version\"' | head -1 | grep -oP '\\d+\\.\\d+\\.\\d+'"
+          ], { timeout: 5_000 });
+          if (agentVer.stdout.trim()) parts.push(`Agent: v${agentVer.stdout.trim()}`);
+        } catch { /* ignore */ }
+        // Agent Git-Commit
+        try {
+          const agentGit = await safeExec('bash', ['-c',
+            "cd /opt/prilog-agent 2>/dev/null || cd /opt/prilog/agent 2>/dev/null; git rev-parse --short HEAD 2>/dev/null"
+          ], { timeout: 5_000 });
+          if (agentGit.stdout.trim()) parts.push(`Commit: ${agentGit.stdout.trim()}`);
+        } catch { /* ignore */ }
+
+        checks.prilogVersion = {
+          status: 'ok',
+          message: parts.length > 0 ? parts.join(', ') : 'Version nicht ermittelbar',
+        };
+      } catch { checks.prilogVersion = { status: 'warning', message: 'Version-Check fehlgeschlagen' }; }
+
       const overall = Object.values(checks).some(c => c.status === 'error') ? 'error'
         : Object.values(checks).some(c => c.status === 'warning') ? 'warning' : 'ok';
 
