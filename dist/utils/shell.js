@@ -227,6 +227,33 @@ async function executeCommand(command, args) {
             catch {
                 checks.prilogVersion = { status: 'warning', message: 'Version-Check fehlgeschlagen' };
             }
+            // 8. IP-Adressen (oeffentlich + Tailscale)
+            try {
+                const parts = [];
+                try {
+                    const pub = await (0, safe_exec_js_1.safeExec)('bash', ['-c',
+                        "curl -s --max-time 5 https://ifconfig.me 2>/dev/null || curl -s --max-time 5 https://api.ipify.org 2>/dev/null || echo '?'"
+                    ], { timeout: 10_000 });
+                    if (pub.stdout.trim())
+                        parts.push(`Public: ${pub.stdout.trim()}`);
+                }
+                catch { /* ignore */ }
+                try {
+                    const ts = await (0, safe_exec_js_1.safeExec)('bash', ['-c',
+                        "tailscale ip -4 2>/dev/null || echo '?'"
+                    ], { timeout: 5_000 });
+                    if (ts.stdout.trim() && ts.stdout.trim() !== '?')
+                        parts.push(`Tailscale: ${ts.stdout.trim()}`);
+                }
+                catch { /* ignore */ }
+                checks.network = {
+                    status: 'ok',
+                    message: parts.length > 0 ? parts.join(', ') : 'IP nicht ermittelbar',
+                };
+            }
+            catch {
+                checks.network = { status: 'warning', message: 'Netzwerk-Check fehlgeschlagen' };
+            }
             const overall = Object.values(checks).some(c => c.status === 'error') ? 'error'
                 : Object.values(checks).some(c => c.status === 'warning') ? 'warning' : 'ok';
             return {
