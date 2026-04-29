@@ -104,7 +104,8 @@ export type CommandName =
   | 'provision'
   | 'shared_tenant.create'
   | 'connector.install'
-  | 'web_client.update';
+  | 'web_client.update'
+  | 'storage.provision_service_account';
 
 export interface ServerCommandPayload {
   commandId: string;
