@@ -239,6 +239,15 @@ volumes:
     report('start_containers', 'running');
     await safeExec('docker', ['compose', '-f', `${tenantDir}/docker-compose.yml`, 'up', '-d']);
 
+    // Volume-Permissions fuer Synapse-User (UID 991) korrigieren — sonst
+    // wirft jeder Media-Upload PermissionError beim Anlegen von
+    // /data/media_store/local_content. Docker Named-Volumes erben die
+    // Owner-Perms vom Image-Mountpoint (root:root), nicht vom Container-User.
+    await safeExec('docker', [
+      'exec', '--user', 'root', `synapse-${config.slug}`,
+      'chown', '-R', '991:991', '/data/media_store',
+    ]);
+
     // Warten auf Health-Check (max 60s)
     let healthy = false;
     for (let i = 0; i < 30; i++) {
