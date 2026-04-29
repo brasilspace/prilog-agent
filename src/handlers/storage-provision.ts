@@ -45,7 +45,10 @@ export interface StorageProvisionResult {
 }
 
 async function mc(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return execFileP('mc', args, { timeout: 30000 });
+  // --disable-pager: mc oeffnet sonst less/more, was bei execFile haengt.
+  // --no-color:      verhindert ANSI-Escapes in stdout (saubere Regex-Parses).
+  // --quiet:         keine Progress-Bar.
+  return execFileP('mc', ['--disable-pager', '--no-color', '--quiet', ...args], { timeout: 30000 });
 }
 
 async function ensureBucket(bucket: string): Promise<void> {
