@@ -52,10 +52,12 @@ async function mc(args: string[]): Promise<{ stdout: string; stderr: string }> {
 }
 
 async function ensureBucket(bucket: string): Promise<void> {
+  logger.info(`[storage-provision] ensureBucket starting: ${bucket}`);
   try {
-    await mc(['mb', `${MC_ALIAS}/${bucket}`, '--ignore-existing']);
+    const r = await mc(['mb', `${MC_ALIAS}/${bucket}`, '--ignore-existing']);
+    logger.info(`[storage-provision] ensureBucket done: ${bucket}`, { stdoutLen: r.stdout.length });
   } catch (err) {
-    logger.error('[storage-provision] mc mb fehlgeschlagen', { err, bucket });
+    logger.error('[storage-provision] mc mb fehlgeschlagen', { err: (err as Error).message, bucket });
     throw new Error(`Bucket ${bucket} konnte nicht angelegt werden: ${(err as Error).message}`);
   }
 }
@@ -99,12 +101,14 @@ async function createServiceAccount(bucket: string, description: string): Promis
   const parentUser = process.env.MINIO_PARENT_USER || 'minioadmin';
 
   try {
-    const { stdout } = await mc([
+    logger.info(`[storage-provision] svcacct add starting`, { bucket, parentUser });
+    const { stdout, stderr } = await mc([
       'admin', 'user', 'svcacct', 'add',
       MC_ALIAS, parentUser,
       '--policy', policyPath,
       '--description', description,
     ]);
+    logger.info(`[storage-provision] svcacct add done`, { stdoutLen: stdout.length, stderrLen: stderr.length });
 
     const accessMatch = /Access Key:\s*(\S+)/i.exec(stdout);
     const secretMatch = /Secret Key:\s*(\S+)/i.exec(stdout);
