@@ -6,6 +6,7 @@ import { executeCommand, spawnLogStream } from './utils/shell.js';
 import { runHealthCheck, HealEvent } from './handlers/healer.js';
 import { handleProvisionCommand } from './handlers/provision.js';
 import { handleSharedTenantCreate } from './handlers/provision-shared.js';
+import { provisionStorageServiceAccount } from './handlers/storage-provision.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
 import { ProvisionConfig } from './provision/types.js';
 import { ServerCommandPayload, LogChunkPayload } from './types.js';
@@ -243,6 +244,43 @@ export class PrilogAgent {
         this.transport.send('agent.command_result', {
           commandId, success: true, output: 'Module status sent', duration: Date.now() - start,
         });
+        return;
+      }
+
+      // ── Storage Service-Account Provisioning ───────────────────────────────
+      if (command === 'storage.provision_service_account') {
+        const bucket = args?.bucket as string | undefined;
+        if (!bucket) {
+          this.transport.send('agent.command_result', {
+            commandId,
+            success: false,
+            output: 'storage.provision_service_account benoetigt args.bucket',
+            duration: Date.now() - start,
+          });
+          return;
+        }
+
+        try {
+          const result = await provisionStorageServiceAccount({
+            bucket,
+            description: args?.description as string | undefined,
+          });
+          this.transport.send('agent.command_result', {
+            commandId,
+            success: true,
+            // Result-Body als JSON im output — Backend parsed es daraus.
+            // Secret faehrt durch die TLS-WS-Verbindung, kein Klartext-Log.
+            output: JSON.stringify(result),
+            duration: Date.now() - start,
+          });
+        } catch (err) {
+          this.transport.send('agent.command_result', {
+            commandId,
+            success: false,
+            error: (err as Error).message,
+            duration: Date.now() - start,
+          });
+        }
         return;
       }
 
