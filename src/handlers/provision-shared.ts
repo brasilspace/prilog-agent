@@ -299,6 +299,19 @@ server {
         proxy_ssl_server_name on;
     }
 
+    # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.
+    # Pfade die mit "tenant-" anfangen werden direkt an MinIO geroutet, damit
+    # die Signatur in presigned URLs stimmt (kein /s3 Prefix-Rewrite).
+    location ~ ^/tenant- {
+        proxy_pass http://127.0.0.1:9000;
+        proxy_set_header Host ${config.domain};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        client_max_body_size 200m;
+    }
+
     # SSE Stream — kein Buffering
     location /api/platform/v1/workflow/events/stream {
         proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;

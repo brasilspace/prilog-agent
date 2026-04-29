@@ -88,14 +88,18 @@ server {
         proxy_read_timeout 30s;
     }
 
-    # MinIO S3 proxy for presigned URLs
-    location /s3/ {
-        rewrite ^/s3/(.*) /$1 break;
+    # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.
+    # SDK signiert https://<host>/<bucket>/<key>; nginx leitet ohne Path-Rewrite
+    # weiter, MinIO sieht denselben Pfad → Signatur stimmt. Nur Pfade die mit
+    # "tenant-" anfangen werden geroutet, damit der SPA-Fallback an "/" intakt
+    # bleibt.
+    location ~ ^/tenant- {
         proxy_pass http://127.0.0.1:9000;
         proxy_set_header Host ${cfg.matrixDomain};
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_request_buffering off;
         client_max_body_size 200m;
     }
 
