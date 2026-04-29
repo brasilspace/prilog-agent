@@ -114,11 +114,11 @@ async function createServiceAccount(bucket: string, description: string): Promis
  * Wir nehmen die offizielle Domain mit dem Nginx-Pfad, damit der Browser
  * (presigned URL) direkt darauf zugreifen kann.
  *
- * Hostname kommt aus AGENT_DOMAIN (gesetzt im prilog-agent-systemd-Unit
- * aus dem Provisioning).
+ * Hostname kommt aus MATRIX_DOMAIN (Standard-Env in prilog-agent-systemd-Unit).
  */
 function buildEndpoint(): string {
-  const domain = process.env.AGENT_DOMAIN
+  const domain = process.env.MATRIX_DOMAIN
+    || process.env.AGENT_DOMAIN
     || process.env.HOSTNAME_FQDN
     || process.env.HOSTNAME
     || 'localhost';
