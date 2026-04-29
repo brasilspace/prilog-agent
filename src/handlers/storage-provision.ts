@@ -26,7 +26,8 @@ import { logger } from '../utils/logger.js';
 
 const execFileP = promisify(execFile);
 
-const MC_ALIAS = 'prilog-local';
+// Alias-Name in der mc-Config — auf allen Customer-Servern als 'local' gesetzt.
+const MC_ALIAS = process.env.MINIO_MC_ALIAS || 'local';
 
 export interface StorageProvisionArgs {
   /** Bucket-Name, z.B. "tenant-weser". Wird angelegt falls nicht existent. */
@@ -90,10 +91,14 @@ async function createServiceAccount(bucket: string, description: string): Promis
   const policyPath = path.join(tmpDir, 'policy.json');
   await fs.writeFile(policyPath, policy);
 
+  // Parent-User: der MinIO-Account, unter dem der Service-Account haengt.
+  // Default ist der MinIO-Root-User des jeweiligen Servers.
+  const parentUser = process.env.MINIO_PARENT_USER || 'minioadmin';
+
   try {
     const { stdout } = await mc([
       'admin', 'user', 'svcacct', 'add',
-      MC_ALIAS, 'minioadmin', // Owner-User; mc ist als minioadmin/Root authentifiziert via Alias
+      MC_ALIAS, parentUser,
       '--policy', policyPath,
       '--description', description,
     ]);
