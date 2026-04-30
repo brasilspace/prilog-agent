@@ -6,6 +6,10 @@ import { executeCommand, spawnLogStream } from './utils/shell.js';
 import { runHealthCheck, HealEvent } from './handlers/healer.js';
 import { handleProvisionCommand } from './handlers/provision.js';
 import { handleSharedTenantCreate } from './handlers/provision-shared.js';
+import {
+  handleSnapshot, handleTransfer, handleRestore,
+  handleCutoverStop, handleVerify, handleCleanup,
+} from './handlers/migration.js';
 import { provisionStorageServiceAccount } from './handlers/storage-provision.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
 import { ProvisionConfig } from './provision/types.js';
@@ -310,6 +314,16 @@ export class PrilogAgent {
         });
         return;
       }
+
+      // ── Tenant-Migration ──────────────────────────────────────────────────
+      const sendFn = (type: string, payload: unknown) => this.transport.send(type as any, payload);
+      const argsObj = (args as Record<string, unknown>) ?? {};
+      if (command === 'tenant.snapshot')      return await handleSnapshot(commandId, argsObj, sendFn);
+      if (command === 'tenant.transfer')      return await handleTransfer(commandId, argsObj, sendFn);
+      if (command === 'tenant.restore')       return await handleRestore(commandId, argsObj, sendFn);
+      if (command === 'tenant.cutover_stop')  return await handleCutoverStop(commandId, argsObj, sendFn);
+      if (command === 'tenant.verify')        return await handleVerify(commandId, argsObj, sendFn);
+      if (command === 'tenant.cleanup')       return await handleCleanup(commandId, argsObj, sendFn);
 
       // ── Shell Commands (Whitelist) ─────────────────────────────────────────
       const result = await executeCommand(command, args as Record<string, string | number | boolean> | undefined);

@@ -105,7 +105,13 @@ export type CommandName =
   | 'shared_tenant.create'
   | 'connector.install'
   | 'web_client.update'
-  | 'storage.provision_service_account';
+  | 'storage.provision_service_account'
+  | 'tenant.snapshot'
+  | 'tenant.transfer'
+  | 'tenant.restore'
+  | 'tenant.cutover_stop'
+  | 'tenant.verify'
+  | 'tenant.cleanup';
 
 export interface ServerCommandPayload {
   commandId: string;
