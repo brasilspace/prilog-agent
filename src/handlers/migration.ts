@@ -183,21 +183,38 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
     if (await fs.stat(composeTar).then(() => true).catch(() => false)) {
       await sh(`mkdir -p ${composeDir} && tar -xzf ${composeTar} -C ${composeDir}`);
       // WICHTIG: Port-Mapping in docker-compose.yml umschreiben — Source-Host
-      // hatte einen anderen Port (z.B. 8102), Target weist evtl. anderen zu
-      // (z.B. 8101). Sonst startet Container auf altem Port, nginx-conf zeigt
-      // auf neuen → Tenant unerreichbar.
-      await sh(`sed -i -E 's|(0\\.0\\.0\\.0:)[0-9]+(:8008)|\\1${synapsePort}\\2|' ${composeDir}/docker-compose.yml`);
+      // hatte einen anderen Port (z.B. 8102) und evtl. ein anderes Bind-IP
+      // (z.B. 127.0.0.1 fuer localhost-only). Wir vereinheitlichen IMMER auf
+      // 0.0.0.0:${synapsePort}:8008 — nginx proxied von aussen, daher muss
+      // der Container auf allen Interfaces lauschen.
+      // Pattern matched jedes "<beliebige-IP>:<Port>:8008", damit auch alte
+      // 127.0.0.1-Bindings (siehe demo-Tenant) korrekt umgeschrieben werden.
+      await sh(`sed -i -E 's|"[^"]*:[0-9]+:8008"|"0.0.0.0:${synapsePort}:8008"|' ${composeDir}/docker-compose.yml`);
       // Assert: Port wurde tatsaechlich gesetzt — sonst hat das compose-Format
       // sich geaendert und unser sed griff nicht (silent fail = unerreichbarer Tenant)
-      const portCheck = await sh(`grep -E '0\\.0\\.0\\.0:${synapsePort}:8008' ${composeDir}/docker-compose.yml`, { allowFail: true });
+      const portCheck = await sh(`grep -E '"0\\.0\\.0\\.0:${synapsePort}:8008"' ${composeDir}/docker-compose.yml`, { allowFail: true });
       if (!portCheck.stdout.includes(`0.0.0.0:${synapsePort}:8008`)) {
-        throw new Error(`Port-Rewrite in docker-compose.yml fehlgeschlagen — erwartet '0.0.0.0:${synapsePort}:8008'. Compose-Format hat sich evtl. geaendert.`);
+        throw new Error(`Port-Rewrite in docker-compose.yml fehlgeschlagen — erwartet '"0.0.0.0:${synapsePort}:8008"'. Compose-Format hat sich evtl. geaendert.`);
       }
     }
 
     // 6. docker-compose stack starten
     const composeFile = `${composeDir}/docker-compose.yml`;
     if (await fs.stat(composeFile).then(() => true).catch(() => false)) {
+      // Pre-Flight: ist der Port schon belegt? Sonst kommt von docker
+      // ein kryptisches "Bind for 0.0.0.0:XXXX failed: port is already
+      // allocated" (siehe demo-Migration 2026-05-01). Wir wollen frueh
+      // mit klarer Meldung scheitern, BEVOR docker compose half-up state
+      // hinterlaesst.
+      const portBound = await sh(`ss -tlnp 2>/dev/null | grep -E ':${synapsePort}\\s' || true`, { allowFail: true });
+      if (portBound.stdout.trim()) {
+        // Wenn der Port schon vom EIGENEN Container belegt ist (z.B. retry
+        // einer Migration), ist das kein Konflikt — compose up handhabt das.
+        const ownContainer = await sh(`docker ps --filter "name=synapse-${slug}" --filter "publish=${synapsePort}" --format '{{.Names}}'`, { allowFail: true });
+        if (!ownContainer.stdout.includes(`synapse-${slug}`)) {
+          throw new Error(`Port ${synapsePort} ist bereits belegt von einem anderen Prozess: ${portBound.stdout.trim().slice(0, 200)}. Migration abgebrochen, bevor docker compose half-up Zustand erzeugt.`);
+        }
+      }
       await sh(`cd ${composeDir} && docker compose up -d`);
       // chown media_store auf Synapse-User (UID 991) — sonst Media-Upload-Errors
       await sh(`docker exec --user root synapse-${slug} chown -R 991:991 /data/media_store 2>&1 || true`);
@@ -257,11 +274,11 @@ export async function handleVerify(commandId: string, args: Record<string, unkno
     }
     if (i < maxAttempts) await new Promise((r) => setTimeout(r, 10_000));
   }
-  try {
-    reply(send, commandId, true, { result: { healthy: false, message: `Synapse antwortet nicht nach ${maxAttempts} Versuchen: ${lastErr}` } });
-  } catch (err: any) {
-    reply(send, commandId, true, { result: { healthy: false, message: String(err?.message ?? err) } });
-  }
+  // Unhealthy → success:false damit Backend's sendAgentCommand sauber
+  // rejected. Vorher (success:true + healthy:false) hat funktioniert weil
+  // der Caller `result.healthy` selbst pruefte, war aber brittle: jeder
+  // neue Caller der vergisst zu pruefen wuerde silent-pass sehen.
+  reply(send, commandId, false, { error: `Synapse antwortet nicht nach ${maxAttempts} Versuchen: ${lastErr}`, result: { healthy: false, message: `Synapse antwortet nicht nach ${maxAttempts} Versuchen: ${lastErr}` } });
 }
 
 // ─── Target: Cleanup ───────────────────────────────────────────────────────
