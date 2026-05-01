@@ -61,8 +61,11 @@ export async function handleSnapshot(commandId: string, args: Record<string, unk
     await sh(`mkdir -p ${dir}`);
 
     // 1. pg_dump (custom format fuer schnelles restore)
+    // Output via stdout-Pipe: sudo-User postgres erzeugt den Dump, root
+    // schreibt die Datei. Sonst: Permission denied (postgres hat keinen
+    // Schreibzugriff auf agent-erstelltes Verzeichnis).
     logger.info(`[migration] pg_dump ${dbName} → ${dir}/db.dump`);
-    await sh(`sudo -u postgres pg_dump -Fc -f ${dir}/db.dump ${dbName}`);
+    await sh(`sudo -u postgres pg_dump -Fc ${dbName} > ${dir}/db.dump`);
 
     // 2. MinIO bucket -> tar (mc mirror local/${bucket} → /tmp + tar)
     logger.info(`[migration] mc mirror ${bucketName} → ${dir}/bucket/`);
