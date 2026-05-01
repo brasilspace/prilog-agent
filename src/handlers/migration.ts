@@ -182,11 +182,11 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
     const composeTar = `${dir}/compose.tar.gz`;
     if (await fs.stat(composeTar).then(() => true).catch(() => false)) {
       await sh(`mkdir -p ${composeDir} && tar -xzf ${composeTar} -C ${composeDir}`);
-      // Wichtig: homeserver.yaml referenziert die DB ueber host.docker.internal +
-      // Tenant-Slug. Bei einer Migration zwischen identisch konfigurierten
-      // Shared-Hosts bleibt das gleich — keine Anpassung noetig. Synapse-Port
-      // dito, weil wir den frisch zugewiesenen Port verwenden (durch DB-Update
-      // im cutover-Step).
+      // WICHTIG: Port-Mapping in docker-compose.yml umschreiben — Source-Host
+      // hatte einen anderen Port (z.B. 8102), Target weist evtl. anderen zu
+      // (z.B. 8101). Sonst startet Container auf altem Port, nginx-conf zeigt
+      // auf neuen → Tenant unerreichbar.
+      await sh(`sed -i -E 's|(0\\.0\\.0\\.0:)[0-9]+(:8008)|\\1${synapsePort}\\2|' ${composeDir}/docker-compose.yml`);
     }
 
     // 6. docker-compose stack starten
