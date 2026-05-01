@@ -313,7 +313,13 @@ async function writeBoxDirectory(config: TenantBoxConfig): Promise<void> {
   await fs.writeFile(path.join(dir, 'manifest.json'),      renderManifest(config),       'utf8');
 
   const signingKey = config.signingKey ?? generateSigningKey();
-  await fs.writeFile(path.join(dir, 'signing.key'), signingKey + '\n', { mode: 0o600 });
+  const signingKeyPath = path.join(dir, 'signing.key');
+  await fs.writeFile(signingKeyPath, signingKey + '\n', { mode: 0o600 });
+  // Synapse läuft als UID 991, muss signing.key lesen können — sonst
+  // bootet der Container nicht ("Permission denied: /data/signing.key").
+  // Das Setzen mit chown statt 0644 hält das Geheimnis vor anderen
+  // Container-Usern verborgen.
+  await safeExec('chown', ['991:991', signingKeyPath]);
 
   // Credentials separat — niemals in docker-compose.yml hardcoden für Audit-Zwecke
   const credsContent = `# Auto-generated — do not edit manually
