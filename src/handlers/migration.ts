@@ -135,6 +135,7 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
   const migrationId = String(args.migrationId);
   const bundlePath = String(args.bundlePath);
   const slug = String(args.slug);
+  const domain = String(args.domain ?? `${slug}.prilog.team`);
   const dbName = String(args.dbName);
   const dbUser = String(args.dbUser);
   const dbPassword = String(args.dbPassword);
@@ -147,8 +148,19 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
     await sh(`mkdir -p ${dir} && tar -xzf ${bundlePath} -C ${dir}`);
 
     // 1. DB-User + DB anlegen
+    // WICHTIG: Synapse verlangt Collation 'C' (sonst 'IncorrectDatabaseSetup'-Crash).
+    // Wenn DB schon existiert (z.B. aus vorherigem Restore-Versuch), pruefen wir
+    // die Collation und erstellen sie ggf. neu — sonst schlaegt Synapse-Start fehl.
     await sh(`sudo -u postgres psql -tAc "SELECT 1 FROM pg_user WHERE usename = '${dbUser}'" | grep -q 1 || sudo -u postgres psql -c "CREATE USER ${dbUser} WITH PASSWORD '${dbPassword}'"`);
-    await sh(`sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${dbName}'" | grep -q 1 || sudo -u postgres createdb -O ${dbUser} ${dbName}`);
+    const dbCheck = await sh(`sudo -u postgres psql -tAc "SELECT datcollate FROM pg_database WHERE datname = '${dbName}'"`, { allowFail: true });
+    const currentCollate = dbCheck.stdout.trim();
+    if (currentCollate && currentCollate !== 'C') {
+      logger.info(`[migration] DB ${dbName} hat falsche Collation (${currentCollate}) — neu erstellen mit C`);
+      await sh(`sudo -u postgres dropdb --if-exists ${dbName}`);
+    }
+    if (!currentCollate || currentCollate !== 'C') {
+      await sh(`sudo -u postgres createdb -O ${dbUser} -E UTF8 --lc-collate=C --lc-ctype=C -T template0 ${dbName}`);
+    }
 
     // 2. pg_restore
     await sh(`sudo -u postgres pg_restore --clean --if-exists --no-owner --role=${dbUser} -d ${dbName} ${dir}/db.dump`);
@@ -187,6 +199,13 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
       throw new Error(`docker-compose.yml fehlt unter ${composeFile} — Synapse kann nicht gestartet werden`);
     }
 
+    // 7. Nginx-Server-Block fuer den Tenant — sonst ist der Tenant ueber
+    //    seine prilog.team-URL nicht erreichbar (kein 443-server_name match).
+    //    Format identisch zu provision-shared.ts handleSharedTenantCreate.
+    await writeTenantNginxConfig(slug, domain, synapsePort);
+    await sh(`nginx -t`);
+    await sh(`systemctl reload nginx`);
+
     reply(send, commandId, true, { result: { restored: true, synapsePort } });
   } catch (err: any) {
     logger.error(`[migration] restore failed: ${err?.message ?? err}`);
@@ -211,12 +230,29 @@ export async function handleCutoverStop(commandId: string, args: Record<string, 
 
 // ─── Target: Verify ────────────────────────────────────────────────────────
 // args: { slug, synapsePort }
+// Synapse kann nach docker compose up -d zwischen 30 und 90 Sekunden brauchen
+// bis es responsive ist (DB-Migrations beim ersten Start, etc.). Wir versuchen
+// mit Backoff bis zu 12 × 10 Sekunden = 2 Min total.
 export async function handleVerify(commandId: string, args: Record<string, unknown>, send: SendFn): Promise<void> {
   const synapsePort = Number(args.synapsePort);
+  const maxAttempts = 12;
+  let lastErr: string | null = null;
+  for (let i = 1; i <= maxAttempts; i++) {
+    try {
+      const r = await sh(`curl -fsS --max-time 8 http://127.0.0.1:${synapsePort}/_matrix/client/versions || echo FAIL`);
+      const healthy = r.stdout.includes('versions') || r.stdout.includes('m.client');
+      if (healthy) {
+        reply(send, commandId, true, { result: { healthy: true, message: `Synapse antwortet (Versuch ${i}/${maxAttempts})` } });
+        return;
+      }
+      lastErr = `kein versions-Header (Versuch ${i}/${maxAttempts})`;
+    } catch (err: any) {
+      lastErr = String(err?.message ?? err);
+    }
+    if (i < maxAttempts) await new Promise((r) => setTimeout(r, 10_000));
+  }
   try {
-    const r = await sh(`curl -fsS --max-time 10 http://127.0.0.1:${synapsePort}/_matrix/client/versions || echo FAIL`);
-    const healthy = r.stdout.includes('versions') || r.stdout.includes('m.client');
-    reply(send, commandId, true, { result: { healthy, message: healthy ? 'Synapse antwortet' : 'Synapse-Endpoint reagiert nicht' } });
+    reply(send, commandId, true, { result: { healthy: false, message: `Synapse antwortet nicht nach ${maxAttempts} Versuchen: ${lastErr}` } });
   } catch (err: any) {
     reply(send, commandId, true, { result: { healthy: false, message: String(err?.message ?? err) } });
   }
@@ -233,4 +269,80 @@ export async function handleCleanup(commandId: string, args: Record<string, unkn
   } catch {
     reply(send, commandId, true, { result: { cleaned: false } });
   }
+}
+
+// ─── Nginx-Server-Block fuer Tenant ─────────────────────────────────────────
+// Wird beim Restore-Step geschrieben — analog zu provision-shared.ts.
+// Wildcard-Cert wird vorausgesetzt unter /etc/letsencrypt/live/wildcard.prilog.team.
+async function writeTenantNginxConfig(slug: string, domain: string, synapsePort: number): Promise<void> {
+  const conf = `server {
+    listen 443 ssl http2;
+    server_name ${domain};
+
+    ssl_certificate     /etc/letsencrypt/live/wildcard.prilog.team/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/wildcard.prilog.team/privkey.pem;
+
+    location /_matrix {
+        proxy_pass http://127.0.0.1:${synapsePort};
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        client_max_body_size 50M;
+    }
+
+    location /_synapse/client {
+        proxy_pass http://127.0.0.1:${synapsePort};
+        proxy_set_header Host $host;
+    }
+
+    location /.well-known/matrix/server {
+        default_type application/json;
+        return 200 '{"m.server": "${domain}:443"}';
+    }
+
+    location /.well-known/matrix/client {
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+        return 200 '{"m.homeserver": {"base_url": "https://${domain}"}}';
+    }
+
+    location /api/ {
+        proxy_pass https://api.prilog.chat/api/;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-Tenant ${domain};
+        proxy_ssl_server_name on;
+    }
+
+    location ~ ^/tenant- {
+        proxy_pass http://127.0.0.1:9000;
+        proxy_set_header Host ${domain};
+        proxy_request_buffering off;
+        client_max_body_size 200m;
+    }
+
+    location /api/platform/v1/workflow/events/stream {
+        proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Real-Tenant ${domain};
+        proxy_ssl_server_name on;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        root /var/www/prilog-web-client;
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+server {
+    listen 80;
+    server_name ${domain};
+    return 301 https://$host$request_uri;
+}
+`;
+  const path = `/etc/nginx/prilog-tenants/${slug}.conf`;
+  await fs.writeFile(path, conf);
 }
