@@ -46,7 +46,7 @@ npm prune --omit=dev
 if [ -f "$ENV_SOURCE" ]; then
   cp "$ENV_SOURCE" "$INSTALL_DIR/.env"
   # Backend-URL Variablen ergänzen falls nicht gesetzt
-  grep -q "BACKEND_WS_URL" "$INSTALL_DIR/.env" || echo "BACKEND_WS_URL=wss://api.prilog.chat/agent/ws" >> "$INSTALL_DIR/.env"
+  grep -q "BACKEND_WS_URL" "$INSTALL_DIR/.env" || echo "BACKEND_WS_URL=wss://api.prilog.chat/api/agent/ws" >> "$INSTALL_DIR/.env"
   grep -q "SYNAPSE_ADMIN_URL" "$INSTALL_DIR/.env" || echo "SYNAPSE_ADMIN_URL=http://localhost:8008" >> "$INSTALL_DIR/.env"
   grep -q "METRICS_INTERVAL" "$INSTALL_DIR/.env" || echo "METRICS_INTERVAL=30000" >> "$INSTALL_DIR/.env"
   grep -q "HEARTBEAT_INTERVAL" "$INSTALL_DIR/.env" || echo "HEARTBEAT_INTERVAL=15000" >> "$INSTALL_DIR/.env"
