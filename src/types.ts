@@ -111,7 +111,12 @@ export type CommandName =
   | 'tenant.restore'
   | 'tenant.cutover_stop'
   | 'tenant.verify'
-  | 'tenant.cleanup';
+  | 'tenant.cleanup'
+  | 'tenant-box.create'
+  | 'tenant-box.snapshot'
+  | 'tenant-box.restore'
+  | 'tenant-box.update'
+  | 'tenant-box.destroy';
 
 export interface ServerCommandPayload {
   commandId: string;

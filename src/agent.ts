@@ -10,6 +10,9 @@ import {
   handleSnapshot, handleTransfer, handleRestore,
   handleCutoverStop, handleVerify, handleCleanup,
 } from './handlers/migration.js';
+import {
+  handleTenantBoxCreate, handleTenantBoxSnapshot, handleTenantBoxDestroy,
+} from './handlers/tenant-box.js';
 import { provisionStorageServiceAccount } from './handlers/storage-provision.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
 import { ProvisionConfig } from './provision/types.js';
@@ -324,6 +327,11 @@ export class PrilogAgent {
       if (command === 'tenant.cutover_stop')  return await handleCutoverStop(commandId, argsObj, sendFn);
       if (command === 'tenant.verify')        return await handleVerify(commandId, argsObj, sendFn);
       if (command === 'tenant.cleanup')       return await handleCleanup(commandId, argsObj, sendFn);
+
+      // ── Tenant-in-a-Box (neue Architektur, siehe konzept-Doc) ────────────
+      if (command === 'tenant-box.create')    return await handleTenantBoxCreate(commandId, argsObj, sendFn);
+      if (command === 'tenant-box.snapshot')  return await handleTenantBoxSnapshot(commandId, argsObj, sendFn);
+      if (command === 'tenant-box.destroy')   return await handleTenantBoxDestroy(commandId, argsObj, sendFn);
 
       // ── Shell Commands (Whitelist) ─────────────────────────────────────────
       const result = await executeCommand(command, args as Record<string, string | number | boolean> | undefined);
