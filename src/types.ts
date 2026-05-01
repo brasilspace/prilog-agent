@@ -116,7 +116,8 @@ export type CommandName =
   | 'tenant-box.snapshot'
   | 'tenant-box.restore'
   | 'tenant-box.update'
-  | 'tenant-box.destroy';
+  | 'tenant-box.destroy'
+  | 'tenant-box.import';
 
 export interface ServerCommandPayload {
   commandId: string;

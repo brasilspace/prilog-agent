@@ -634,3 +634,209 @@ export async function handleTenantBoxDestroy(
     reply(send, commandId, false, { error: String(err?.message ?? err) });
   }
 }
+
+// ─── Import: Migration vom alten Layout (shared PG+MinIO) → Tenant-Box ──────
+// Spezialisierter Handler für die one-time Migration der bestehenden Tenants
+// (demo, demo2, demo3, leander). Nach Phase 4 nicht mehr benötigt.
+//
+// Ablauf (alle auf demselben Host — kein Cross-Host-Transfer):
+//   1. signing.key vom alten Pfad lesen → invariant für Matrix-Identität
+//   2. Snapshot der alten Daten in /tmp/import-<slug>/:
+//      - dump.sql aus shared Postgres
+//      - bucket/ aus shared MinIO
+//      - media/ aus /var/lib/prilog/synapse-<slug>/
+//   3. Alte synapse-<slug> Container stoppen + entfernen (Container-Name-
+//      Konflikt mit neuer Box vermeiden). VOLUME bleibt für Rollback.
+//   4. Tenant-Box anlegen (writeBoxDirectory) MIT alter signing.key
+//   5. compose up postgres minio (synapse noch nicht!)
+//   6. Daten importieren in pg-<slug> + minio-<slug>
+//   7. media nach /srv/tenants/<slug>/synapse/media_store/ kopieren
+//   8. compose up synapse → bootet mit imported DB
+//   9. Verify
+//   10. nginx-Block schreiben + reload
+//
+// Soak-Phase: alte DB im shared PG + alter Bucket bleiben 7 Tage als
+// Rollback-Pfad. Cleanup-Job läuft separat.
+
+const TenantBoxImportSchema = TenantBoxConfigSchema.extend({
+  oldSynapseContainer: z.string().default(''),  // Default: synapse-<slug>
+  oldDbName:           z.string(),               // z.B. synapse_demo3
+  oldDbUser:           z.string(),               // z.B. synapse_demo3
+  oldDbPassword:       z.string(),
+  oldBucketName:       z.string(),               // z.B. tenant-demo3
+  oldMediaPath:        z.string().default(''),   // Default: /var/lib/prilog/synapse-<slug>
+  oldSigningKeyPath:   z.string().default(''),   // Default: /opt/prilog/tenants/<slug>/signing.key
+});
+
+export async function handleTenantBoxImport(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const start = Date.now();
+  let parsed: z.infer<typeof TenantBoxImportSchema>;
+  try {
+    parsed = TenantBoxImportSchema.parse(args?.config);
+  } catch (err: any) {
+    const msg = err?.issues
+      ? err.issues.map((i: any) => `${i.path.join('.')}: ${i.message}`).join(', ')
+      : (err?.message ?? String(err));
+    reply(send, commandId, false, { error: `Config: ${msg}` });
+    return;
+  }
+
+  const slug = parsed.slug;
+  const oldSynapseContainer = parsed.oldSynapseContainer || `synapse-${slug}`;
+  const oldMediaPath        = parsed.oldMediaPath        || `/var/lib/prilog/synapse-${slug}`;
+  const oldSigningKeyPath   = parsed.oldSigningKeyPath   || `/opt/prilog/tenants/${slug}/signing.key`;
+
+  logger.info(`[tenant-box] import ${slug} from shared layout (synapse:${parsed.synapsePort}, minio:${parsed.minioPort})`);
+
+  const importStaging = `/tmp/import-${slug}-${Date.now()}`;
+  const dir = tenantDir(slug);
+
+  try {
+    // 1. signing.key vom alten Pfad lesen — Invariante!
+    const oldSigningKey = await fs.readFile(oldSigningKeyPath, 'utf8').catch(() => null);
+    if (!oldSigningKey) {
+      throw new Error(`Alte signing.key nicht gefunden unter ${oldSigningKeyPath} — Identität wäre nicht erhaltbar!`);
+    }
+    const config: TenantBoxConfig = {
+      ...parsed,
+      signingKey: oldSigningKey.trim(),
+    };
+
+    // 2. Staging-Dir + Snapshot der alten Daten
+    await fs.mkdir(importStaging, { recursive: true });
+
+    // 2a. pg_dump aus shared Postgres
+    logger.info(`[tenant-box] import: pg_dump ${parsed.oldDbName}`);
+    await safeExec('bash', ['-c',
+      `sudo -u postgres pg_dump -Fc ${parsed.oldDbName} > ${importStaging}/dump.pgcustom`,
+    ]);
+
+    // 2b. mc mirror aus shared MinIO Bucket (alias 'local' siehe agent-Setup)
+    logger.info(`[tenant-box] import: mc mirror ${parsed.oldBucketName}`);
+    await fs.mkdir(`${importStaging}/bucket`, { recursive: true });
+    await safeExec('bash', ['-c',
+      `mc mirror --quiet local/${parsed.oldBucketName}/ ${importStaging}/bucket/ 2>&1 | tail -3`,
+    ]);
+
+    // 2c. Media-Files (kopieren später nach compose up — sonst chown-Stress)
+    const mediaExists = await fs.stat(oldMediaPath).then(() => true).catch(() => false);
+
+    // 3. Alten Synapse-Container stoppen + entfernen (nicht das Volume!)
+    logger.info(`[tenant-box] import: stoppe alten Container ${oldSynapseContainer}`);
+    await safeExec('docker', ['stop', oldSynapseContainer], { ignoreExitCode: true });
+    await safeExec('docker', ['rm', oldSynapseContainer], { ignoreExitCode: true });
+
+    // (Downtime beginnt hier — User-Anfragen bekommen 502)
+
+    // 4. Neue Box-Files schreiben
+    await writeBoxDirectory(config);
+
+    // 5. Nur postgres + minio starten (synapse noch NICHT — DB muss erst importiert werden)
+    const composeFile = path.join(dir, 'docker-compose.yml');
+    await safeExec('docker', ['compose', '-f', composeFile, 'up', '-d', 'postgres', 'minio']);
+
+    // 5b. Auf postgres + minio healthy warten (max 60s)
+    let pgReady = false, minioReady = false;
+    for (let i = 0; i < 12; i++) {
+      const pgState = await safeExec('docker', ['inspect', '--format', '{{.State.Health.Status}}', `pg-${slug}`], { ignoreExitCode: true });
+      const minioState = await safeExec('docker', ['inspect', '--format', '{{.State.Health.Status}}', `minio-${slug}`], { ignoreExitCode: true });
+      pgReady = pgState.stdout.trim() === 'healthy';
+      minioReady = minioState.stdout.trim() === 'healthy';
+      if (pgReady && minioReady) break;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    if (!pgReady || !minioReady) {
+      throw new Error(`postgres oder minio nicht healthy nach 60s (pg=${pgReady}, minio=${minioReady})`);
+    }
+
+    // 6a. PG-Restore in den NEUEN postgres-Container
+    logger.info(`[tenant-box] import: pg_restore in pg-${slug}`);
+    await safeExec('bash', ['-c',
+      `cat ${importStaging}/dump.pgcustom | docker exec -i pg-${slug} pg_restore -U synapse -d synapse --no-owner --no-acl`,
+    ], { ignoreExitCode: true });
+    // pg_restore kann harmlose Warnings ausgeben (Owner ändert sich) — ignoreExitCode
+
+    // 6b. mc mirror in NEUE MinIO
+    logger.info(`[tenant-box] import: mc mirror → minio-${slug}`);
+    const mcAlias = `tb-${slug}`;
+    let mcReady = false;
+    for (let i = 0; i < 12; i++) {
+      const r = await safeExec('mc', [
+        'alias', 'set', mcAlias,
+        `http://127.0.0.1:${config.minioPort}`,
+        config.minioRootUser, config.minioRootPassword,
+      ], { ignoreExitCode: true });
+      if (r.exitCode === 0) { mcReady = true; break; }
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (!mcReady) {
+      throw new Error('mc alias konnte nicht gesetzt werden für neue MinIO');
+    }
+    await safeExec('mc', ['mb', '--ignore-existing', `${mcAlias}/${config.minioBucket}`], { ignoreExitCode: true });
+    const bucketSize = await safeExec('bash', ['-c', `find ${importStaging}/bucket -type f | wc -l`]);
+    if (parseInt(bucketSize.stdout.trim(), 10) > 0) {
+      await safeExec('bash', ['-c',
+        `mc mirror --quiet ${importStaging}/bucket/ ${mcAlias}/${config.minioBucket}/ 2>&1 | tail -3`,
+      ]);
+    }
+
+    // 7. Media-Files kopieren (synapse media_store)
+    if (mediaExists) {
+      logger.info(`[tenant-box] import: copy media`);
+      const targetMedia = path.join(dir, 'synapse', 'media_store');
+      // -a: preserve attributes, --no-target-directory: kopiere INHALT, nicht den Folder
+      await safeExec('bash', ['-c', `cp -aT ${oldMediaPath} ${targetMedia}`], { ignoreExitCode: true });
+      await safeExec('chown', ['-R', '991:991', targetMedia]);
+    }
+
+    // 8. Synapse jetzt starten
+    logger.info(`[tenant-box] import: starte synapse`);
+    await safeExec('docker', ['compose', '-f', composeFile, 'up', '-d', 'synapse']);
+
+    // 9. Health-Check (max 120s)
+    let healthy = false;
+    for (let i = 0; i < 12; i++) {
+      const r = await safeExec('curl', [
+        '-fsS', '--max-time', '8',
+        `http://127.0.0.1:${config.synapsePort}/_matrix/client/versions`,
+      ], { ignoreExitCode: true });
+      if (r.stdout.includes('versions') || r.stdout.includes('m.client')) { healthy = true; break; }
+      await new Promise(r => setTimeout(r, 10_000));
+    }
+
+    if (!healthy) {
+      reply(send, commandId, false, {
+        error: 'Synapse antwortet nicht nach 120s — Import angefangen aber unvollständig. Manuell prüfen.',
+        result: { partial: true, importStaging },
+      });
+      return;
+    }
+
+    // 10. nginx-Block + reload
+    await writeNginxConfig(config);
+    await safeExec('nginx', ['-t']);
+    await safeExec('systemctl', ['reload', 'nginx']);
+
+    // 11. Staging-Dir aufräumen — Daten sind im neuen Stack drin
+    await safeExec('rm', ['-rf', importStaging], { ignoreExitCode: true });
+
+    reply(send, commandId, true, {
+      result: {
+        slug,
+        synapsePort: config.synapsePort,
+        minioPort: config.minioPort,
+        healthy: true,
+        durationMs: Date.now() - start,
+        message: `Import OK. Old DB ${parsed.oldDbName} + bucket ${parsed.oldBucketName} bleiben 7 Tage als Rollback-Pfad.`,
+      },
+    });
+  } catch (err: any) {
+    logger.error(`[tenant-box] import failed: ${err?.message ?? err}`);
+    // Staging-Dir behalten — Operator kann manuell weiter machen
+    reply(send, commandId, false, { error: String(err?.message ?? err), result: { importStaging } });
+  }
+}
