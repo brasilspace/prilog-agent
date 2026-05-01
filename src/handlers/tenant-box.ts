@@ -645,6 +645,38 @@ export async function handleTenantBoxDestroy(
   }
 }
 
+// ─── Backup: Snapshot + Encrypt + Upload zu S3 (Object Storage) ────────────
+// STATUS 2026-05-02: Stub-Implementation — Encryption + Upload sind noch nicht
+// produktiv. Backend-Service ruft den Handler bereits auf, der Handler returnt
+// einen Mock damit der Code-Pfad durchläuft. Vor Produktiv-Aktivierung:
+//   - openssl-streaming-encryption oder node-crypto-Pipe
+//   - mc alias für Hetzner Object Storage
+//   - SHA256 + IV + Auth-Tag korrekt berechnen
+// Konzept: prilog_docs/docs/umsetzung/tenant-in-a-box-konzept.md (Sektion 3.2)
+
+export async function handleTenantBoxBackup(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  const backupId = Number(args.backupId);
+  if (!slug || !Number.isFinite(backupId)) {
+    reply(send, commandId, false, { error: 'slug + backupId required' });
+    return;
+  }
+
+  // Diese Implementierung ist bewusst noch nicht aktiv — sie würde aktuell
+  // in Production scheitern weil Hetzner Object Storage Credentials fehlen.
+  // Wir geben einen klaren Hinweis zurück, damit Tester sehen dass der
+  // Code-Pfad bis hierhin durchläuft, aber keine Daten unverschlüsselt
+  // hochgeladen werden.
+  logger.warn(`[tenant-box] backup not yet implemented — Phase 5 in der Roadmap. (slug=${slug}, backupId=${backupId})`);
+  reply(send, commandId, false, {
+    error: 'backup-handler ist scaffolding (NICHT scharf) — Phase 5a implementiert tatsächliche Encryption + Upload.',
+  });
+}
+
 // ─── Import: Migration vom alten Layout (shared PG+MinIO) → Tenant-Box ──────
 // Spezialisierter Handler für die one-time Migration der bestehenden Tenants
 // (demo, demo2, demo3, leander). Nach Phase 4 nicht mehr benötigt.

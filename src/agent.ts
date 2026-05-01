@@ -12,7 +12,7 @@ import {
 } from './handlers/migration.js';
 import {
   handleTenantBoxCreate, handleTenantBoxSnapshot, handleTenantBoxDestroy,
-  handleTenantBoxImport,
+  handleTenantBoxImport, handleTenantBoxBackup,
 } from './handlers/tenant-box.js';
 import { provisionStorageServiceAccount } from './handlers/storage-provision.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
@@ -334,6 +334,7 @@ export class PrilogAgent {
       if (command === 'tenant-box.snapshot')  return await handleTenantBoxSnapshot(commandId, argsObj, sendFn);
       if (command === 'tenant-box.destroy')   return await handleTenantBoxDestroy(commandId, argsObj, sendFn);
       if (command === 'tenant-box.import')    return await handleTenantBoxImport(commandId, argsObj, sendFn);
+      if (command === 'tenant-box.backup')    return await handleTenantBoxBackup(commandId, argsObj, sendFn);
 
       // ── Shell Commands (Whitelist) ─────────────────────────────────────────
       const result = await executeCommand(command, args as Record<string, string | number | boolean> | undefined);
