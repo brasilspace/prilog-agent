@@ -33,8 +33,14 @@ const MANIFEST_SCHEMA_VERSION = 1;
 
 // Default-Versionen — werden langfristig vom Backend überschrieben (Version-
 // Registry, siehe Konzept Sektion 4). Hier nur Fallback.
+//
+// Wichtig: synapse muss zur DB-Schema-Version passen! Bei Import alter Tenants
+// erwarten wir das Schema von synapse:latest (was im Shared-Deployment lief).
+// Mit einer älteren Version kämen unbekannte Tabellen aus dem dump und Synapse
+// würde diese ignorieren oder das Schema neu initialisieren — Daten werden
+// dann nicht angezeigt (siehe demo3-Import 2026-05-02).
 const DEFAULT_VERSIONS = {
-  synapse: '1.95.0',
+  synapse: 'latest',
   postgres: '15-alpine',
   minio: 'RELEASE.2024-12-13T22-19-12Z',
 } as const;
@@ -235,7 +241,7 @@ services:
       - ${networkName}
 
   synapse:
-    image: matrixdotorg/synapse:v${versions.synapse}
+    image: matrixdotorg/synapse:${versions.synapse}
     container_name: synapse-${config.slug}
     hostname: synapse-${config.slug}
     restart: unless-stopped
