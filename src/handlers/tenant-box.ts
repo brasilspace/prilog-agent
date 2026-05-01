@@ -41,7 +41,11 @@ const MANIFEST_SCHEMA_VERSION = 1;
 // dann nicht angezeigt (siehe demo3-Import 2026-05-02).
 const DEFAULT_VERSIONS = {
   synapse: 'latest',
-  postgres: '15-alpine',
+  // Postgres muss MINDESTENS so neu sein wie der Shared-Host-Postgres,
+  // sonst kann pg_restore das Dump-Format nicht lesen ("unsupported
+  // version 1.15 in file header" — gesehen 2026-05-02 mit pg-15
+  // gegen Source-pg-16). Shared-Host läuft heute pg-16, daher 16-alpine.
+  postgres: '16-alpine',
   minio: 'RELEASE.2024-12-13T22-19-12Z',
 } as const;
 
