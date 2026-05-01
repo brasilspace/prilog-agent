@@ -81,8 +81,22 @@ export async function handleSnapshot(commandId: string, args: Record<string, unk
       logger.warn(`[migration] synapse-data nicht gefunden: ${synapseDataDir} — wird uebersprungen`);
     }
 
-    // 4. Alles in ein Bundle
-    await sh(`tar -czf ${bundlePath} -C ${dir} db.dump bucket synapse.tar.gz 2>/dev/null || tar -czf ${bundlePath} -C ${dir} db.dump bucket`);
+    // 4. Compose-Config + homeserver.yaml + signing.key (alles aus /opt/prilog/tenants/<slug>)
+    // Ohne das wuerde Restore zwar Daten haben, aber kein Synapse starten koennen.
+    const composeDir = `/opt/prilog/tenants/${slug}`;
+    const composeExists = await fs.stat(composeDir).then(() => true).catch(() => false);
+    if (composeExists) {
+      logger.info(`[migration] compose-dir ${composeDir} → ${dir}/compose.tar.gz`);
+      await sh(`tar -czf ${dir}/compose.tar.gz -C ${composeDir} .`);
+    } else {
+      logger.warn(`[migration] compose-dir nicht gefunden: ${composeDir} — Synapse muss auf Target neu konfiguriert werden`);
+    }
+
+    // 5. Alles in ein Bundle
+    const bundleParts = ['db.dump', 'bucket'];
+    if (exists) bundleParts.push('synapse.tar.gz');
+    if (composeExists) bundleParts.push('compose.tar.gz');
+    await sh(`tar -czf ${bundlePath} -C ${dir} ${bundleParts.join(' ')}`);
 
     const stat = await fs.stat(bundlePath);
     reply(send, commandId, true, { result: { bundlePath, bundleSize: stat.size } });
@@ -151,13 +165,26 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
       await sh(`tar -xzf ${synapseTar} -C ${synapseDataDir}`);
     }
 
-    // 5. docker-compose stack starten — nutzt das vorhandene shared-tenant-Layout
+    // 5. Compose-Dir wiederherstellen (homeserver.yaml + docker-compose.yml + signing.key)
     const composeDir = `/opt/prilog/tenants/${slug}`;
+    const composeTar = `${dir}/compose.tar.gz`;
+    if (await fs.stat(composeTar).then(() => true).catch(() => false)) {
+      await sh(`mkdir -p ${composeDir} && tar -xzf ${composeTar} -C ${composeDir}`);
+      // Wichtig: homeserver.yaml referenziert die DB ueber host.docker.internal +
+      // Tenant-Slug. Bei einer Migration zwischen identisch konfigurierten
+      // Shared-Hosts bleibt das gleich — keine Anpassung noetig. Synapse-Port
+      // dito, weil wir den frisch zugewiesenen Port verwenden (durch DB-Update
+      // im cutover-Step).
+    }
+
+    // 6. docker-compose stack starten
     const composeFile = `${composeDir}/docker-compose.yml`;
     if (await fs.stat(composeFile).then(() => true).catch(() => false)) {
       await sh(`cd ${composeDir} && docker compose up -d`);
+      // chown media_store auf Synapse-User (UID 991) — sonst Media-Upload-Errors
+      await sh(`docker exec --user root synapse-${slug} chown -R 991:991 /data/media_store 2>&1 || true`);
     } else {
-      logger.warn(`[migration] kein docker-compose unter ${composeFile} — Synapse bitte manuell starten`);
+      throw new Error(`docker-compose.yml fehlt unter ${composeFile} — Synapse kann nicht gestartet werden`);
     }
 
     reply(send, commandId, true, { result: { restored: true, synapsePort } });
