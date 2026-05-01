@@ -725,6 +725,23 @@ export async function handleTenantBoxImport(
     // 2c. Media-Files (kopieren später nach compose up — sonst chown-Stress)
     const mediaExists = await fs.stat(oldMediaPath).then(() => true).catch(() => false);
 
+    // 2d. Pre-Flight: Sind die neuen Ports wirklich frei?
+    //     Vorher (bis 2026-05-02) haben wir den alten Container gestoppt
+    //     BEVOR wir den Port checkten — bei Konflikt war der Tenant dann
+    //     offline während wir auf den Bug stießen. Jetzt FAIL-FAST hier.
+    const portUsed = await safeExec('bash', ['-c',
+      `ss -tlnp 2>/dev/null | grep -E ':${parsed.synapsePort}\\s' || true`,
+    ], { ignoreExitCode: true });
+    if (portUsed.stdout.trim() && !portUsed.stdout.includes(`synapse-${slug}`)) {
+      throw new Error(`Port ${parsed.synapsePort} ist bereits belegt: ${portUsed.stdout.trim().slice(0, 200)} — Migration abgebrochen, alter Container noch online.`);
+    }
+    const minioPortUsed = await safeExec('bash', ['-c',
+      `ss -tlnp 2>/dev/null | grep -E ':${parsed.minioPort}\\s' || true`,
+    ], { ignoreExitCode: true });
+    if (minioPortUsed.stdout.trim()) {
+      throw new Error(`MinIO-Port ${parsed.minioPort} bereits belegt: ${minioPortUsed.stdout.trim().slice(0, 200)} — Migration abgebrochen, alter Container noch online.`);
+    }
+
     // 3. Alten Synapse-Container stoppen + entfernen (nicht das Volume!)
     logger.info(`[tenant-box] import: stoppe alten Container ${oldSynapseContainer}`);
     await safeExec('docker', ['stop', oldSynapseContainer], { ignoreExitCode: true });
