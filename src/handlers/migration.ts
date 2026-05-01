@@ -187,6 +187,12 @@ export async function handleRestore(commandId: string, args: Record<string, unkn
       // (z.B. 8101). Sonst startet Container auf altem Port, nginx-conf zeigt
       // auf neuen → Tenant unerreichbar.
       await sh(`sed -i -E 's|(0\\.0\\.0\\.0:)[0-9]+(:8008)|\\1${synapsePort}\\2|' ${composeDir}/docker-compose.yml`);
+      // Assert: Port wurde tatsaechlich gesetzt — sonst hat das compose-Format
+      // sich geaendert und unser sed griff nicht (silent fail = unerreichbarer Tenant)
+      const portCheck = await sh(`grep -E '0\\.0\\.0\\.0:${synapsePort}:8008' ${composeDir}/docker-compose.yml`, { allowFail: true });
+      if (!portCheck.stdout.includes(`0.0.0.0:${synapsePort}:8008`)) {
+        throw new Error(`Port-Rewrite in docker-compose.yml fehlgeschlagen — erwartet '0.0.0.0:${synapsePort}:8008'. Compose-Format hat sich evtl. geaendert.`);
+      }
     }
 
     // 6. docker-compose stack starten
