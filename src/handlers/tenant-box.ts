@@ -646,6 +646,98 @@ export async function handleTenantBoxDestroy(
   }
 }
 
+// ─── Legacy-Cleanup: alte Shared-Architektur-Reste entfernen ───────────────
+// Wird vom Tenant-Lifecycle-Service (Backend) aufgerufen wenn ein Tenant
+// gelöscht wird. Räumt das auf was tenant-box.destroy nicht abdeckt:
+//   - synapse_<slug> DB im shared Postgres (auf dem Host)
+//   - tenant-<slug> Bucket im shared MinIO
+//   - /opt/prilog/tenants/<slug>/ alte compose-files
+//   - synapse-<slug> Container falls noch da (z.B. wenn Tenant nie migriert wurde)
+//   - synapse-data-<slug> docker volume
+//   - /etc/nginx/sites-enabled/<domain>.conf alte nginx-blöcke
+
+export async function handleLegacyCleanup(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  const domain = String(args.domain ?? `${slug}.prilog.team`);
+  if (!slug) {
+    reply(send, commandId, false, { error: 'slug required' });
+    return;
+  }
+
+  const cleaned: string[] = [];
+  const skipped: string[] = [];
+
+  // 1. Container stoppen+entfernen falls noch da
+  const containerCheck = await safeExec('docker', ['ps', '-a', '--format', '{{.Names}}', '--filter', `name=synapse-${slug}`], { ignoreExitCode: true });
+  if (containerCheck.stdout.trim()) {
+    await safeExec('docker', ['stop', `synapse-${slug}`], { ignoreExitCode: true });
+    await safeExec('docker', ['rm', `synapse-${slug}`], { ignoreExitCode: true });
+    cleaned.push(`container synapse-${slug}`);
+  } else {
+    skipped.push('container (already gone)');
+  }
+
+  // 2. Docker named volume
+  const volumeName = `${slug}_synapse-data-${slug}`;
+  const volumeCheck = await safeExec('docker', ['volume', 'ls', '--format', '{{.Name}}', '--filter', `name=${volumeName}`], { ignoreExitCode: true });
+  if (volumeCheck.stdout.includes(volumeName)) {
+    await safeExec('docker', ['volume', 'rm', volumeName], { ignoreExitCode: true });
+    cleaned.push(`volume ${volumeName}`);
+  } else {
+    skipped.push('volume (already gone)');
+  }
+
+  // 3. Shared Postgres-DB droppen
+  const dbName = `synapse_${slug}`;
+  const dbUser = `synapse_${slug}`;
+  const dbCheck = await safeExec('bash', ['-c',
+    `sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`,
+  ], { ignoreExitCode: true });
+  if (dbCheck.stdout.trim() === '1') {
+    await safeExec('bash', ['-c', `sudo -u postgres dropdb --if-exists ${dbName}`], { ignoreExitCode: true });
+    await safeExec('bash', ['-c', `sudo -u postgres dropuser --if-exists ${dbUser}`], { ignoreExitCode: true });
+    cleaned.push(`shared-pg DB ${dbName}`);
+  } else {
+    skipped.push('shared-pg DB (already gone)');
+  }
+
+  // 4. Shared MinIO-Bucket entfernen
+  const bucketName = `tenant-${slug}`;
+  const bucketCheck = await safeExec('mc', ['ls', `local/${bucketName}`], { ignoreExitCode: true });
+  if (bucketCheck.exitCode === 0) {
+    await safeExec('mc', ['rb', '--force', `local/${bucketName}`], { ignoreExitCode: true });
+    cleaned.push(`shared-minio bucket ${bucketName}`);
+  } else {
+    skipped.push('shared-minio bucket (already gone)');
+  }
+
+  // 5. /opt/prilog/tenants/<slug>/ — alte compose-files
+  const oldDir = `/opt/prilog/tenants/${slug}`;
+  if (await fs.stat(oldDir).then(() => true).catch(() => false)) {
+    await safeExec('rm', ['-rf', oldDir], { ignoreExitCode: true });
+    cleaned.push(`dir ${oldDir}`);
+  } else {
+    skipped.push('old dir (already gone)');
+  }
+
+  // 6. nginx sites-enabled
+  const nginxConf = `/etc/nginx/sites-enabled/${domain}.conf`;
+  if (await fs.stat(nginxConf).then(() => true).catch(() => false)) {
+    await fs.unlink(nginxConf).catch(() => {});
+    await fs.unlink(`/etc/nginx/sites-available/${domain}.conf`).catch(() => {});
+    await safeExec('systemctl', ['reload', 'nginx'], { ignoreExitCode: true });
+    cleaned.push(`nginx ${domain}.conf`);
+  } else {
+    skipped.push('nginx conf (already gone)');
+  }
+
+  reply(send, commandId, true, { result: { slug, cleaned, skipped } });
+}
+
 // ─── Backup: Snapshot + Encrypt + Upload zu S3 (Object Storage) ────────────
 // STATUS 2026-05-02: Stub-Implementation — Encryption + Upload sind noch nicht
 // produktiv. Backend-Service ruft den Handler bereits auf, der Handler returnt

@@ -118,7 +118,8 @@ export type CommandName =
   | 'tenant-box.update'
   | 'tenant-box.destroy'
   | 'tenant-box.import'
-  | 'tenant-box.backup';
+  | 'tenant-box.backup'
+  | 'tenant-box.legacy_cleanup';
 
 export interface ServerCommandPayload {
   commandId: string;
