@@ -119,6 +119,7 @@ export type CommandName =
   | 'tenant-box.destroy'
   | 'tenant-box.import'
   | 'tenant-box.backup'
+  | 'tenant-box.rewrite_nginx'
   | 'tenant-box.legacy_cleanup';
 
 export interface ServerCommandPayload {

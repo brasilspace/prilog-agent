@@ -592,6 +592,59 @@ export async function handleTenantBoxCreate(
   }
 }
 
+/**
+ * Schreibt nur die nginx-Konfiguration der Tenant-Box neu + reload.
+ * Nuetzlich nach Agent-Update mit geaenderten nginx-Templates, ohne den
+ * Stack neu zu starten. Idempotent.
+ */
+export async function handleTenantBoxRewriteNginx(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  if (!slug) {
+    reply(send, commandId, false, { error: 'slug fehlt' });
+    return;
+  }
+  const dir = tenantDir(slug);
+  const manifestPath = path.join(dir, 'manifest.json');
+
+  try {
+    const stat = await fs.stat(manifestPath).catch(() => null);
+    if (!stat) {
+      reply(send, commandId, false, { error: `manifest.json fuer ${slug} nicht gefunden` });
+      return;
+    }
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+
+    // Manifest -> TenantBoxConfig (nur die Felder die writeNginxConfig braucht)
+    const config = TenantBoxConfigSchema.parse({
+      slug:               manifest.slug,
+      domain:             manifest.domain,
+      serverName:         manifest.serverName,
+      publicBaseUrl:      manifest.publicBaseUrl,
+      synapsePort:        manifest.synapsePort,
+      minioPort:          manifest.minioPort,
+      pgPassword:         'unused-rewrite',
+      minioRootUser:      'unused',
+      minioRootPassword:  'unused-rewrite-pw',
+      minioBucket:        'unused',
+      registrationSecret: 'unused',
+      signingKey:         'ed25519:unused unused',
+      tier:               (manifest.tier as 'free' | 'pro' | 'school' | 'enterprise') ?? 'pro',
+    });
+
+    await writeNginxConfig(config);
+    await safeExec('nginx', ['-t']);
+    await safeExec('systemctl', ['reload', 'nginx']);
+    reply(send, commandId, true, { result: { slug, message: 'nginx-Block neu geschrieben + reload OK' } });
+  } catch (err: any) {
+    logger.error(`[tenant-box] rewrite_nginx failed: ${err?.message ?? err}`);
+    reply(send, commandId, false, { error: String(err?.message ?? err) });
+  }
+}
+
 export async function handleTenantBoxSnapshot(
   commandId: string,
   args: Record<string, unknown>,
