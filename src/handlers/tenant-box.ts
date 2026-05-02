@@ -781,13 +781,15 @@ export async function handleLegacyCleanup(
 }
 
 // ─── Backup: Snapshot + Encrypt + Upload zu S3 (Object Storage) ────────────
-// STATUS 2026-05-02: Stub-Implementation — Encryption + Upload sind noch nicht
-// produktiv. Backend-Service ruft den Handler bereits auf, der Handler returnt
-// einen Mock damit der Code-Pfad durchläuft. Vor Produktiv-Aktivierung:
-//   - openssl-streaming-encryption oder node-crypto-Pipe
-//   - mc alias für Hetzner Object Storage
-//   - SHA256 + IV + Auth-Tag korrekt berechnen
-// Konzept: prilog_docs/docs/umsetzung/tenant-in-a-box-konzept.md (Sektion 3.2)
+// Ablauf:
+//   1. Postgres clean-stop (atomar)
+//   2. tar -czf von /srv/tenants/<slug>/
+//   3. Postgres wieder starten (Tenant ist sofort wieder schreibfähig)
+//   4. SHA256 berechnen
+//   5. AES-256-CBC encrypt mit per-tenant-key (vom Backend übergeben)
+//   6. mc cp zu Hetzner Object Storage
+//   7. lokales tarball + .enc löschen
+//   8. return { sizeBytes, sha256, bucketKey }
 
 export async function handleTenantBoxBackup(
   commandId: string,
@@ -796,20 +798,238 @@ export async function handleTenantBoxBackup(
 ): Promise<void> {
   const slug = String(args.slug ?? '');
   const backupId = Number(args.backupId);
-  if (!slug || !Number.isFinite(backupId)) {
-    reply(send, commandId, false, { error: 'slug + backupId required' });
+  const encryptionKeyHex = String(args.encryptionKeyHex ?? '');
+  const s3 = args.s3 as { endpoint: string; accessKeyId: string; secretAccessKey: string; bucket: string; key: string } | undefined;
+
+  if (!slug || !Number.isFinite(backupId) || !encryptionKeyHex || encryptionKeyHex.length !== 64 || !s3) {
+    reply(send, commandId, false, { error: 'slug + backupId + encryptionKeyHex (64 chars) + s3 config required' });
     return;
   }
 
-  // Diese Implementierung ist bewusst noch nicht aktiv — sie würde aktuell
-  // in Production scheitern weil Hetzner Object Storage Credentials fehlen.
-  // Wir geben einen klaren Hinweis zurück, damit Tester sehen dass der
-  // Code-Pfad bis hierhin durchläuft, aber keine Daten unverschlüsselt
-  // hochgeladen werden.
-  logger.warn(`[tenant-box] backup not yet implemented — Phase 5 in der Roadmap. (slug=${slug}, backupId=${backupId})`);
-  reply(send, commandId, false, {
-    error: 'backup-handler ist scaffolding (NICHT scharf) — Phase 5a implementiert tatsächliche Encryption + Upload.',
-  });
+  const dir = tenantDir(slug);
+  const composeFile = path.join(dir, 'docker-compose.yml');
+  if (!await fs.stat(composeFile).then(() => true).catch(() => false)) {
+    reply(send, commandId, false, { error: `tenant-box ${slug} existiert nicht` });
+    return;
+  }
+
+  await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, '').replace(/\..+$/, '').replace('T', 'T');
+  const tarballLocal = path.join(SNAPSHOT_DIR, `${slug}-${ts}.tar.gz`);
+  const encLocal = `${tarballLocal}.enc`;
+  const start = Date.now();
+  let pgStopped = false;
+
+  try {
+    // 1. Postgres stop
+    await safeExec('docker', ['compose', '-f', composeFile, 'stop', 'postgres']);
+    pgStopped = true;
+
+    // 2. tar (mit pigz wenn da, sonst gzip)
+    const hasPigz = (await safeExec('which', ['pigz'], { ignoreExitCode: true })).exitCode === 0;
+    if (hasPigz) {
+      await safeExec('bash', ['-c', `tar -cf - -C ${dir} . | pigz -p 4 > ${tarballLocal}`]);
+    } else {
+      await safeExec('bash', ['-c', `tar -czf ${tarballLocal} -C ${dir} .`]);
+    }
+
+    // 3. Postgres wieder hoch (Tenant ist wieder schreibfähig)
+    await safeExec('docker', ['compose', '-f', composeFile, 'start', 'postgres']);
+    pgStopped = false;
+
+    // 4. SHA256 vom UNVERSCHLÜSSELTEN tarball (das ist was Restore verifizieren wird)
+    const shaResult = await safeExec('sha256sum', [tarballLocal]);
+    const sha256 = shaResult.stdout.split(/\s+/)[0];
+
+    // 5. Encrypt mit AES-256-CBC + PBKDF2 — der key ist HKDF-derived per-tenant
+    //    vom Backend (HKDF von BACKUP_MASTER_KEY + slug)
+    await safeExec('bash', ['-c',
+      `openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in ${tarballLocal} -out ${encLocal} -pass pass:${encryptionKeyHex}`,
+    ]);
+
+    // 6. mc alias setzen + upload
+    const mcAlias = `tb-backup-${slug}`;
+    await safeExec('mc', [
+      'alias', 'set', mcAlias, s3.endpoint, s3.accessKeyId, s3.secretAccessKey, '--api', 'S3v4',
+    ]);
+    await safeExec('mc', ['cp', '--quiet', encLocal, `${mcAlias}/${s3.bucket}/${s3.key}`]);
+
+    // 7. Größe ermitteln + cleanup
+    const stat = await fs.stat(encLocal);
+    await safeExec('rm', ['-f', tarballLocal, encLocal]);
+    await safeExec('mc', ['alias', 'remove', mcAlias], { ignoreExitCode: true });
+
+    reply(send, commandId, true, {
+      result: {
+        slug, backupId,
+        sizeBytes: stat.size,
+        sha256, // SHA256 des plaintext-tarball — wird beim Restore nach decrypt verifiziert
+        bucketKey: s3.key,
+        durationMs: Date.now() - start,
+      },
+    });
+  } catch (err: any) {
+    // Sicherstellen dass postgres läuft auch wenn was fehlschlug
+    if (pgStopped) {
+      await safeExec('docker', ['compose', '-f', composeFile, 'start', 'postgres'], { ignoreExitCode: true });
+    }
+    // Cleanup local files
+    await safeExec('rm', ['-f', tarballLocal, encLocal], { ignoreExitCode: true });
+    logger.error(`[tenant-box] backup failed for ${slug}: ${err?.message ?? err}`);
+    reply(send, commandId, false, { error: String(err?.message ?? err) });
+  }
+}
+
+// ─── Restore: Download + Decrypt + Untar + Compose up ──────────────────────
+// Ablauf:
+//   1. Falls Tenant-Box existiert: stop + remove (compose down -v)
+//   2. Download .enc vom S3
+//   3. Decrypt mit per-tenant-key
+//   4. SHA256 verify gegen erwarteten Wert
+//   5. /srv/tenants/<slug>/ extrahieren
+//   6. compose up postgres minio (warten bis healthy)
+//   7. compose up synapse
+//   8. Verify Synapse-Health
+//   9. nginx-Block + reload
+
+export async function handleTenantBoxRestore(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  const expectedSha256 = String(args.expectedSha256 ?? '');
+  const encryptionKeyHex = String(args.encryptionKeyHex ?? '');
+  const s3 = args.s3 as { endpoint: string; accessKeyId: string; secretAccessKey: string; bucket: string; key: string } | undefined;
+  const inPlace = args.inPlace !== false; // default true: replace existing
+
+  if (!slug || !expectedSha256 || !encryptionKeyHex || encryptionKeyHex.length !== 64 || !s3) {
+    reply(send, commandId, false, { error: 'slug + expectedSha256 + encryptionKeyHex + s3 required' });
+    return;
+  }
+
+  const dir = tenantDir(slug);
+  const stagingDir = `/tmp/restore-${slug}-${Date.now()}`;
+  const encDownload = `${stagingDir}/restored.tar.gz.enc`;
+  const tarballDownload = `${stagingDir}/restored.tar.gz`;
+  const start = Date.now();
+
+  try {
+    await fs.mkdir(stagingDir, { recursive: true });
+
+    // 1. Existierende Box runterfahren + Verzeichnis aufräumen (in-place restore)
+    if (inPlace) {
+      const composeFile = path.join(dir, 'docker-compose.yml');
+      if (await fs.stat(composeFile).then(() => true).catch(() => false)) {
+        await safeExec('docker', ['compose', '-f', composeFile, 'down', '-v'], { ignoreExitCode: true });
+      }
+      await safeExec('rm', ['-rf', dir], { ignoreExitCode: true });
+    }
+
+    // 2. Download
+    const mcAlias = `tb-restore-${slug}`;
+    await safeExec('mc', [
+      'alias', 'set', mcAlias, s3.endpoint, s3.accessKeyId, s3.secretAccessKey, '--api', 'S3v4',
+    ]);
+    await safeExec('mc', ['cp', '--quiet', `${mcAlias}/${s3.bucket}/${s3.key}`, encDownload]);
+
+    // 3. Decrypt
+    await safeExec('bash', ['-c',
+      `openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in ${encDownload} -out ${tarballDownload} -pass pass:${encryptionKeyHex}`,
+    ]);
+
+    // 4. SHA256 verify
+    const shaResult = await safeExec('sha256sum', [tarballDownload]);
+    const actualSha256 = shaResult.stdout.split(/\s+/)[0];
+    if (actualSha256 !== expectedSha256) {
+      throw new Error(`SHA256-Mismatch! Expected ${expectedSha256}, got ${actualSha256} — Backup ist möglicherweise korrupt oder Encryption-Key falsch.`);
+    }
+
+    // 5. Extrahieren
+    await fs.mkdir(dir, { recursive: true });
+    await safeExec('tar', ['-xzf', tarballDownload, '-C', dir]);
+
+    // 6. Volume-Permissions
+    await safeExec('chown', ['-R', '70:70', path.join(dir, 'postgres')], { ignoreExitCode: true });
+    await safeExec('chown', ['-R', '991:991', path.join(dir, 'synapse', 'media_store')], { ignoreExitCode: true });
+    await safeExec('chown', ['991:991', path.join(dir, 'signing.key')], { ignoreExitCode: true });
+
+    // 7. Compose up
+    const composeFile = path.join(dir, 'docker-compose.yml');
+    await safeExec('docker', ['compose', '-f', composeFile, 'up', '-d', 'postgres', 'minio']);
+
+    // Wait healthy
+    let pgReady = false, minioReady = false;
+    for (let i = 0; i < 12; i++) {
+      const pg = await safeExec('docker', ['inspect', '--format', '{{.State.Health.Status}}', `pg-${slug}`], { ignoreExitCode: true });
+      const mi = await safeExec('docker', ['inspect', '--format', '{{.State.Health.Status}}', `minio-${slug}`], { ignoreExitCode: true });
+      pgReady = pg.stdout.trim() === 'healthy';
+      minioReady = mi.stdout.trim() === 'healthy';
+      if (pgReady && minioReady) break;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    if (!pgReady || !minioReady) {
+      throw new Error(`postgres oder minio nicht healthy nach 60s (pg=${pgReady}, minio=${minioReady})`);
+    }
+
+    // 8. Synapse starten + verify
+    await safeExec('docker', ['compose', '-f', composeFile, 'up', '-d', 'synapse']);
+
+    // Manifest lesen für port + domain
+    const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    const synapsePort = manifest.ports?.synapse ?? 8100;
+    const domain = manifest.domain;
+
+    let healthy = false;
+    for (let i = 0; i < 18; i++) { // 3 min — Synapse-DB-Init kann nach Restore länger dauern
+      const r = await safeExec('curl', [
+        '-fsS', '--max-time', '8',
+        `http://127.0.0.1:${synapsePort}/_matrix/client/versions`,
+      ], { ignoreExitCode: true });
+      if (r.stdout.includes('versions')) { healthy = true; break; }
+      await new Promise(r => setTimeout(r, 10_000));
+    }
+    if (!healthy) {
+      throw new Error(`Synapse antwortet nicht nach 180s — Restore war techn. erfolgreich aber Container startet nicht. Manuell debuggen.`);
+    }
+
+    // 9. nginx — Server-Block ist im Tarball nicht, wird hier neu generiert
+    const config: TenantBoxConfig = {
+      slug,
+      domain,
+      serverName: manifest.server_name,
+      publicBaseUrl: manifest.public_baseurl,
+      synapsePort,
+      minioPort: manifest.ports?.minio ?? 9100,
+      pgPassword: 'unused-restore', // wird von writeNginxConfig nicht gebraucht
+      minioRootUser: 'unused',
+      minioRootPassword: 'unused-pw',
+      registrationSecret: 'unused',
+      tier: manifest.tier ?? 'pro',
+      minioBucket: 'default',
+    };
+    await writeNginxConfig(config);
+    await safeExec('nginx', ['-t']);
+    await safeExec('systemctl', ['reload', 'nginx']);
+
+    // Cleanup
+    await safeExec('rm', ['-rf', stagingDir], { ignoreExitCode: true });
+    await safeExec('mc', ['alias', 'remove', mcAlias], { ignoreExitCode: true });
+
+    reply(send, commandId, true, {
+      result: {
+        slug,
+        synapsePort,
+        domain,
+        healthy: true,
+        durationMs: Date.now() - start,
+      },
+    });
+  } catch (err: any) {
+    logger.error(`[tenant-box] restore failed for ${slug}: ${err?.message ?? err}`);
+    // Staging behalten für Debug
+    reply(send, commandId, false, { error: String(err?.message ?? err), result: { stagingDir } });
+  }
 }
 
 // ─── Import: Migration vom alten Layout (shared PG+MinIO) → Tenant-Box ──────

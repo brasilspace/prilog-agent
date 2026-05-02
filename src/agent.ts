@@ -13,6 +13,7 @@ import {
 import {
   handleTenantBoxCreate, handleTenantBoxSnapshot, handleTenantBoxDestroy,
   handleTenantBoxImport, handleTenantBoxBackup, handleLegacyCleanup,
+  handleTenantBoxRestore,
 } from './handlers/tenant-box.js';
 import { provisionStorageServiceAccount } from './handlers/storage-provision.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
@@ -336,6 +337,7 @@ export class PrilogAgent {
       if (command === 'tenant-box.import')    return await handleTenantBoxImport(commandId, argsObj, sendFn);
       if (command === 'tenant-box.backup')    return await handleTenantBoxBackup(commandId, argsObj, sendFn);
       if (command === 'tenant-box.legacy_cleanup') return await handleLegacyCleanup(commandId, argsObj, sendFn);
+      if (command === 'tenant-box.restore')   return await handleTenantBoxRestore(commandId, argsObj, sendFn);
 
       // ── Shell Commands (Whitelist) ─────────────────────────────────────────
       const result = await executeCommand(command, args as Record<string, string | number | boolean> | undefined);
