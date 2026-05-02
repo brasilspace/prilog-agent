@@ -388,8 +388,27 @@ server {
         return 200 '{"m.homeserver": {"base_url": "${config.publicBaseUrl}"}}';
     }
 
+    # Per-Tenant MinIO. WICHTIG: KEIN Path-Strip - AWS Signature V4 signiert
+    # die volle URL inkl. Bucket-Name. Wenn nginx das /storage/-Prefix
+    # strippt (proxy_pass mit trailing /), errechnet MinIO eine andere
+    # Signatur als der SDK signiert hat -> SignatureDoesNotMatch (403).
+    # Daher: Bucket = tenant-<slug>, URL = /tenant-<slug>/..., SDK-Endpoint
+    # = https://<domain> (ohne /storage), Pfad-Identitaet zwischen SDK + MinIO.
+    location /tenant-${config.slug}/ {
+        proxy_pass http://127.0.0.1:${config.minioPort};
+        proxy_set_header Host $host;
+        client_max_body_size 200m;
+    }
+    # Backwards-compat: /default/ ist der alte Bucket-Name fuer Tenants die
+    # vor dem Bucket-Rename provisioniert wurden. Endpunkt ist dann auch
+    # https://<domain> (ohne /storage), genau wie beim neuen Schema.
+    location /default/ {
+        proxy_pass http://127.0.0.1:${config.minioPort};
+        proxy_set_header Host $host;
+        client_max_body_size 200m;
+    }
+    # Legacy /storage/ — fuer evtl. noch nicht-migrierten Code (kann spaeter raus).
     location /storage/ {
-        # Per-Tenant MinIO via 127.0.0.1:<minioPort>, nicht nach extern offen
         proxy_pass http://127.0.0.1:${config.minioPort}/;
         proxy_set_header Host $host;
         client_max_body_size 200m;
