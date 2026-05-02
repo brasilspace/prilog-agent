@@ -65,8 +65,9 @@ const TenantBoxConfigSchema = z.object({
   // Postgres
   pgPassword:  z.string().min(16),
 
-  // MinIO
-  minioRootUser:     z.string().min(8),
+  // MinIO. min(3) entspricht MinIO's eigener Anforderung.
+  // Vorher min(8): scheiterte bei kurzen Slugs wie "demo" (tb-demo = 7 chars).
+  minioRootUser:     z.string().min(3),
   minioRootPassword: z.string().min(16),
   minioBucket:       z.string().default('default'),
 
