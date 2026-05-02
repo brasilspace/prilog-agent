@@ -84,6 +84,13 @@ const TenantBoxConfigSchema = z.object({
 
   // Tier (für spätere Federation-Disable, Resource-Limits)
   tier: z.enum(['free', 'pro', 'enterprise']).default('pro'),
+
+  // Admin-User wird nach erstem Synapse-Boot via /_synapse/admin/v1/register
+  // angelegt (HMAC gegen registrationSecret). Optional — wenn nicht gesetzt,
+  // wird kein Admin-User erstellt (z.B. bei Migration alter Tenants kommt
+  // der bereits aus dem importierten DB-Dump).
+  adminUsername: z.string().nullish(),
+  adminPassword: z.string().nullish(),
 });
 
 export type TenantBoxConfig = z.infer<typeof TenantBoxConfigSchema>;
@@ -514,6 +521,40 @@ export async function handleTenantBoxCreate(
       return;
     }
 
+    // 6. Admin-User über Synapse Admin-API registrieren (wenn angegeben)
+    let adminCreated = false;
+    if (config.adminUsername && config.adminPassword) {
+      try {
+        const nonceRes = await safeExec('curl', ['-sf', `http://127.0.0.1:${config.synapsePort}/_synapse/admin/v1/register`]);
+        const nonce = JSON.parse(nonceRes.stdout).nonce;
+
+        const crypto = await import('node:crypto');
+        const hmac = crypto.createHmac('sha1', config.registrationSecret);
+        hmac.update(nonce);
+        hmac.update('\0');
+        hmac.update(config.adminUsername);
+        hmac.update('\0');
+        hmac.update(config.adminPassword);
+        hmac.update('\0');
+        hmac.update('admin');
+        const mac = hmac.digest('hex');
+
+        const regBody = JSON.stringify({
+          nonce, username: config.adminUsername, password: config.adminPassword, admin: true, mac,
+        });
+        await safeExec('curl', [
+          '-sf', '-X', 'POST',
+          `http://127.0.0.1:${config.synapsePort}/_synapse/admin/v1/register`,
+          '-H', 'Content-Type: application/json',
+          '-d', regBody,
+        ]);
+        adminCreated = true;
+        logger.info(`[tenant-box] admin-user @${config.adminUsername} angelegt`);
+      } catch (err: any) {
+        logger.warn(`[tenant-box] admin-user-Erstellung fehlgeschlagen: ${err?.message ?? err}`);
+      }
+    }
+
     reply(send, commandId, true, {
       result: {
         slug: config.slug,
@@ -521,6 +562,7 @@ export async function handleTenantBoxCreate(
         minioPort:   config.minioPort,
         bucket:      config.minioBucket,
         bucketReady,
+        adminCreated,
         healthy: true,
         durationMs: Date.now() - start,
       },
