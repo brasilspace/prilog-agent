@@ -335,6 +335,9 @@ async function writeTenantNginxConfig(slug: string, domain: string, synapsePort:
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Real-Tenant ${domain};
         proxy_ssl_server_name on;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
     }
 
     location ~ ^/tenant- {

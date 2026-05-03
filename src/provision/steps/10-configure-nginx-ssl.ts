@@ -86,6 +86,11 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_ssl_server_name on;
         proxy_read_timeout 30s;
+
+        # WebSocket-Upgrade durchreichen (fuer /api/platform/v1/sheets-collab/* etc.)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
     }
 
     # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.

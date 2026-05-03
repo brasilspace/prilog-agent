@@ -306,6 +306,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-Tenant ${config.domain};
         proxy_ssl_server_name on;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
     }
 
     # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.
