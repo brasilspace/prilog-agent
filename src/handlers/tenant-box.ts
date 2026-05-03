@@ -628,12 +628,15 @@ export async function handleTenantBoxRewriteNginx(
       publicBaseUrl:      manifest.public_baseurl ?? manifest.publicBaseUrl,
       synapsePort:        ports.synapse ?? manifest.synapsePort,
       minioPort:          ports.minio ?? manifest.minioPort,
-      pgPassword:         'unused-rewrite',
-      minioRootUser:      'unused',
-      minioRootPassword:  'unused-rewrite-pw',
-      minioBucket:        'unused',
-      registrationSecret: 'unused',
-      signingKey:         'ed25519:unused unused',
+      // Dummy-Werte fuer required-Felder im Schema — werden bei rewrite_nginx
+      // nicht benoetigt (writeNginxConfig nutzt nur slug/domain/serverName/
+      // publicBaseUrl/synapsePort/minioPort).
+      pgPassword:         'unused-rewrite-placeholder-1234567890',
+      minioRootUser:      'unused-rewrite',
+      minioRootPassword:  'unused-rewrite-placeholder-1234567890',
+      minioBucket:        'unused-rewrite',
+      registrationSecret: 'unused-rewrite-placeholder-1234567890-abcdef-123456789',
+      signingKey:         'ed25519 a_unused_unused_unused_unused_unused_unused_unused_unused',
       tier:               (manifest.tier as 'free' | 'pro' | 'school' | 'enterprise') ?? 'pro',
     });
 
