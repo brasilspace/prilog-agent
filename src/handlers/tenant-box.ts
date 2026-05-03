@@ -618,14 +618,16 @@ export async function handleTenantBoxRewriteNginx(
     }
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as Record<string, unknown>;
 
-    // Manifest -> TenantBoxConfig (nur die Felder die writeNginxConfig braucht)
+    // Manifest verwendet snake_case (siehe renderManifest in tenant-box.ts).
+    // Mapping auf TenantBoxConfig (camelCase) — nur Felder die writeNginxConfig braucht.
+    const ports = (manifest.ports ?? {}) as { synapse?: number; minio?: number };
     const config = TenantBoxConfigSchema.parse({
-      slug:               manifest.slug,
+      slug:               manifest.tenant_slug ?? manifest.slug,
       domain:             manifest.domain,
-      serverName:         manifest.serverName,
-      publicBaseUrl:      manifest.publicBaseUrl,
-      synapsePort:        manifest.synapsePort,
-      minioPort:          manifest.minioPort,
+      serverName:         manifest.server_name ?? manifest.serverName,
+      publicBaseUrl:      manifest.public_baseurl ?? manifest.publicBaseUrl,
+      synapsePort:        ports.synapse ?? manifest.synapsePort,
+      minioPort:          ports.minio ?? manifest.minioPort,
       pgPassword:         'unused-rewrite',
       minioRootUser:      'unused',
       minioRootPassword:  'unused-rewrite-pw',
