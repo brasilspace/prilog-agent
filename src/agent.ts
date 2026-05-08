@@ -14,6 +14,8 @@ import {
   handleTenantBoxCreate, handleTenantBoxSnapshot, handleTenantBoxDestroy,
   handleTenantBoxImport, handleTenantBoxBackup, handleLegacyCleanup,
   handleTenantBoxRestore, handleTenantBoxRewriteNginx,
+  handleTenantBoxReportVersions, handleTenantBoxHealthcheck,
+  handleTenantBoxUpdate,
 } from './handlers/tenant-box.js';
 import { provisionStorageServiceAccount } from './handlers/storage-provision.js';
 import { ensureMatrixConnectorInstalled } from './provision/connector.js';
@@ -331,6 +333,9 @@ export class PrilogAgent {
       if (command === 'tenant.cleanup')       return await handleCleanup(commandId, argsObj, sendFn);
 
       // ── Tenant-in-a-Box (neue Architektur, siehe konzept-Doc) ────────────
+      if (command === 'tenant-box.report_versions') return await handleTenantBoxReportVersions(commandId, argsObj, sendFn);
+      if (command === 'tenant-box.healthcheck')     return await handleTenantBoxHealthcheck(commandId, argsObj, sendFn);
+      if (command === 'tenant-box.update')          return await handleTenantBoxUpdate(commandId, argsObj, sendFn);
       if (command === 'tenant-box.create')    return await handleTenantBoxCreate(commandId, argsObj, sendFn);
       if (command === 'tenant-box.snapshot')  return await handleTenantBoxSnapshot(commandId, argsObj, sendFn);
       if (command === 'tenant-box.destroy')   return await handleTenantBoxDestroy(commandId, argsObj, sendFn);

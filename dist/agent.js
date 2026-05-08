@@ -9,6 +9,9 @@ const shell_js_1 = require("./utils/shell.js");
 const healer_js_1 = require("./handlers/healer.js");
 const provision_js_1 = require("./handlers/provision.js");
 const provision_shared_js_1 = require("./handlers/provision-shared.js");
+const migration_js_1 = require("./handlers/migration.js");
+const tenant_box_js_1 = require("./handlers/tenant-box.js");
+const storage_provision_js_1 = require("./handlers/storage-provision.js");
 const connector_js_1 = require("./provision/connector.js");
 const logger_js_1 = require("./utils/logger.js");
 class PrilogAgent {
@@ -201,6 +204,42 @@ class PrilogAgent {
                 });
                 return;
             }
+            // ── Storage Service-Account Provisioning ───────────────────────────────
+            if (command === 'storage.provision_service_account') {
+                const bucket = args?.bucket;
+                if (!bucket) {
+                    this.transport.send('agent.command_result', {
+                        commandId,
+                        success: false,
+                        output: 'storage.provision_service_account benoetigt args.bucket',
+                        duration: Date.now() - start,
+                    });
+                    return;
+                }
+                try {
+                    const result = await (0, storage_provision_js_1.provisionStorageServiceAccount)({
+                        bucket,
+                        description: args?.description,
+                    });
+                    this.transport.send('agent.command_result', {
+                        commandId,
+                        success: true,
+                        // Result-Body als JSON im output — Backend parsed es daraus.
+                        // Secret faehrt durch die TLS-WS-Verbindung, kein Klartext-Log.
+                        output: JSON.stringify(result),
+                        duration: Date.now() - start,
+                    });
+                }
+                catch (err) {
+                    this.transport.send('agent.command_result', {
+                        commandId,
+                        success: false,
+                        error: err.message,
+                        duration: Date.now() - start,
+                    });
+                }
+                return;
+            }
             if (command === 'connector.install') {
                 const connectorConfig = args?.config;
                 if (!connectorConfig) {
@@ -224,6 +263,44 @@ class PrilogAgent {
                 });
                 return;
             }
+            // ── Tenant-Migration ──────────────────────────────────────────────────
+            const sendFn = (type, payload) => this.transport.send(type, payload);
+            const argsObj = args ?? {};
+            if (command === 'tenant.snapshot')
+                return await (0, migration_js_1.handleSnapshot)(commandId, argsObj, sendFn);
+            if (command === 'tenant.transfer')
+                return await (0, migration_js_1.handleTransfer)(commandId, argsObj, sendFn);
+            if (command === 'tenant.restore')
+                return await (0, migration_js_1.handleRestore)(commandId, argsObj, sendFn);
+            if (command === 'tenant.cutover_stop')
+                return await (0, migration_js_1.handleCutoverStop)(commandId, argsObj, sendFn);
+            if (command === 'tenant.verify')
+                return await (0, migration_js_1.handleVerify)(commandId, argsObj, sendFn);
+            if (command === 'tenant.cleanup')
+                return await (0, migration_js_1.handleCleanup)(commandId, argsObj, sendFn);
+            // ── Tenant-in-a-Box (neue Architektur, siehe konzept-Doc) ────────────
+            if (command === 'tenant-box.report_versions')
+                return await (0, tenant_box_js_1.handleTenantBoxReportVersions)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.healthcheck')
+                return await (0, tenant_box_js_1.handleTenantBoxHealthcheck)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.update')
+                return await (0, tenant_box_js_1.handleTenantBoxUpdate)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.create')
+                return await (0, tenant_box_js_1.handleTenantBoxCreate)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.snapshot')
+                return await (0, tenant_box_js_1.handleTenantBoxSnapshot)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.destroy')
+                return await (0, tenant_box_js_1.handleTenantBoxDestroy)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.import')
+                return await (0, tenant_box_js_1.handleTenantBoxImport)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.backup')
+                return await (0, tenant_box_js_1.handleTenantBoxBackup)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.legacy_cleanup')
+                return await (0, tenant_box_js_1.handleLegacyCleanup)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.rewrite_nginx')
+                return await (0, tenant_box_js_1.handleTenantBoxRewriteNginx)(commandId, argsObj, sendFn);
+            if (command === 'tenant-box.restore')
+                return await (0, tenant_box_js_1.handleTenantBoxRestore)(commandId, argsObj, sendFn);
             // ── Shell Commands (Whitelist) ─────────────────────────────────────────
             const result = await (0, shell_js_1.executeCommand)(command, args);
             this.transport.send('agent.command_result', { commandId, ...result });

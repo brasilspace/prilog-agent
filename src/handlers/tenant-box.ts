@@ -650,6 +650,327 @@ export async function handleTenantBoxRewriteNginx(
   }
 }
 
+// ─── Update: docker compose Image-Tag-Bump + Restart ─────────────────────
+//
+// Pre-Snapshot wird NICHT hier gemacht — das Backend triggert vorher
+// tenant-box.backup mit tier='pre-update'. Dieser Handler macht nur den
+// eigentlichen Compose-Bump.
+//
+// Args:
+//   slug:     'demo'
+//   versions: { synapse?: string; postgres?: string; minio?: string }
+//             — nur die Komponenten die geaendert werden sollen
+//
+// Schritte:
+//   1. compose-File lesen, image-Tags der relevanten Services ersetzen
+//   2. compose pull (zieht neue Images)
+//   3. compose up -d (recreate nur die Services die sich geaendert haben)
+//   4. Reply mit fromVersions / toVersions
+//
+// Kein Health-Check hier — das macht das Backend mit separatem Healthcheck.
+// Kein Auto-Rollback hier — das macht das Backend mit restoreBackup wenn
+// der Healthcheck fehlschlaegt.
+
+export async function handleTenantBoxUpdate(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  const versions = (args.versions ?? {}) as { synapse?: string; postgres?: string; minio?: string };
+  if (!slug) {
+    reply(send, commandId, false, { error: 'slug fehlt' });
+    return;
+  }
+  const dir = tenantDir(slug);
+  const composeFile = path.join(dir, 'docker-compose.yml');
+
+  try {
+    const compose = await fs.readFile(composeFile, 'utf8').catch(() => null);
+    if (!compose) {
+      reply(send, commandId, false, { error: `tenant-box ${slug} existiert nicht` });
+      return;
+    }
+
+    // Alte Versionen aus dem compose-File extrahieren (regex statt YAML-Parser
+    // damit wir Format-Treue beim Schreiben haben)
+    const extract = (service: string, repo: string): string | null => {
+      // matched: image: <repo>:<tag>  innerhalb von   <service>:\n ... image:
+      const re = new RegExp(`(\\b${service}:\\s*\\n[\\s\\S]*?image:\\s*${repo}:)([^\\s]+)`, 'm');
+      const m = compose.match(re);
+      return m?.[2] ?? null;
+    };
+    const fromVersions = {
+      synapse:  extract('synapse',  'matrixdotorg/synapse'),
+      postgres: extract('postgres', 'postgres'),
+      minio:    extract('minio',    'minio/minio'),
+    };
+
+    let updated = compose;
+    const changedServices: string[] = [];
+
+    if (versions.synapse && versions.synapse !== fromVersions.synapse) {
+      const re = new RegExp(`(\\bsynapse:\\s*\\n[\\s\\S]*?image:\\s*matrixdotorg/synapse:)([^\\s]+)`, 'm');
+      updated = updated.replace(re, `$1${versions.synapse}`);
+      changedServices.push('synapse');
+    }
+    if (versions.postgres && versions.postgres !== fromVersions.postgres) {
+      const re = new RegExp(`(\\bpostgres:\\s*\\n[\\s\\S]*?image:\\s*postgres:)([^\\s]+)`, 'm');
+      updated = updated.replace(re, `$1${versions.postgres}`);
+      changedServices.push('postgres');
+    }
+    if (versions.minio && versions.minio !== fromVersions.minio) {
+      const re = new RegExp(`(\\bminio:\\s*\\n[\\s\\S]*?image:\\s*minio/minio:)([^\\s]+)`, 'm');
+      updated = updated.replace(re, `$1${versions.minio}`);
+      changedServices.push('minio');
+    }
+
+    if (changedServices.length === 0) {
+      reply(send, commandId, true, {
+        result: { slug, fromVersions, toVersions: fromVersions, changedServices: [], idempotent: true },
+      });
+      return;
+    }
+
+    // Backup des compose-Files (so dass Backend bei Bedarf manuell zurueckwerfen kann)
+    await fs.writeFile(`${composeFile}.before-update.${Date.now()}`, compose, 'utf8');
+    await fs.writeFile(composeFile, updated, 'utf8');
+
+    // Pull der neuen Images
+    const pull = await safeExec('docker', ['compose', '-f', composeFile, 'pull', ...changedServices], { ignoreExitCode: true });
+    if (pull.exitCode !== 0) {
+      // Pull failed → compose-File zurueckschreiben damit nichts halbes liegt
+      await fs.writeFile(composeFile, compose, 'utf8');
+      reply(send, commandId, false, {
+        error: `docker compose pull failed: ${pull.stderr || pull.stdout}`,
+        rolledBackComposeFile: true,
+      });
+      return;
+    }
+
+    // Up -d wird NUR die geaenderten Services neu starten (compose erkennt
+    // image-Diff). Mit --no-deps damit andere Services nicht angefasst werden.
+    // Allerdings wuerden Postgres-Updates Synapse-Restart erzwingen, das ist OK.
+    const start = Date.now();
+    const up = await safeExec('docker', [
+      'compose', '-f', composeFile, 'up', '-d',
+      ...changedServices,
+    ]);
+    if (up.exitCode !== 0) {
+      reply(send, commandId, false, { error: `docker compose up failed: ${up.stderr || up.stdout}` });
+      return;
+    }
+
+    reply(send, commandId, true, {
+      result: {
+        slug,
+        fromVersions,
+        toVersions: { ...fromVersions, ...versions },
+        changedServices,
+        durationMs: Date.now() - start,
+      },
+    });
+  } catch (err: any) {
+    logger.error(`[tenant-box] update failed for ${slug}: ${err?.message ?? err}`);
+    reply(send, commandId, false, { error: String(err?.message ?? err) });
+  }
+}
+
+// ─── Live Version Scan + Healthcheck (Phase 6 Update-Pipeline, Stufe 4) ───
+//
+// Diese zwei Handler liefern Read-only-Daten ueber den aktuellen Zustand
+// einer Tenant-Box. Werden vom Drift-Detection-Cron + von der Update-
+// Pipeline aufgerufen. Keine State-Aenderung.
+
+export async function handleTenantBoxReportVersions(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  if (!slug) {
+    reply(send, commandId, false, { error: 'slug fehlt' });
+    return;
+  }
+  const dir = tenantDir(slug);
+  const composeFile = path.join(dir, 'docker-compose.yml');
+
+  try {
+    if (!await fs.stat(composeFile).then(() => true).catch(() => false)) {
+      reply(send, commandId, false, { error: `tenant-box ${slug} existiert nicht` });
+      return;
+    }
+
+    // docker compose ps --format json gibt eine Liste der laufenden
+    // Services mit Image-Tags zurueck. Wir extrahieren Synapse / Postgres
+    // / MinIO. Image-Format ist typisch <repo>:<tag>, wir nehmen den Teil
+    // nach dem Doppelpunkt.
+    const ps = await safeExec('docker', [
+      'compose', '-f', composeFile, 'ps', '--format', 'json', '--all',
+    ], { ignoreExitCode: true });
+
+    if (ps.exitCode !== 0) {
+      reply(send, commandId, false, { error: `docker compose ps failed: ${ps.stderr || ps.stdout}` });
+      return;
+    }
+
+    // docker compose ps --format json gibt eine NDJSON-Liste pro Zeile
+    // (eine JSON-Object pro Service). Manche Versionen liefern auch ein
+    // einzelnes JSON-Array — wir handhaben beides.
+    const services: Array<{ Service?: string; Image?: string; State?: string }> = [];
+    const trimmed = ps.stdout.trim();
+    if (trimmed.startsWith('[')) {
+      try { services.push(...(JSON.parse(trimmed) as typeof services)); } catch { /* ignore */ }
+    } else {
+      for (const line of trimmed.split('\n')) {
+        if (!line.trim()) continue;
+        try { services.push(JSON.parse(line)); } catch { /* skip malformed */ }
+      }
+    }
+
+    const findImage = (serviceName: string): string | null => {
+      const svc = services.find(s => s.Service === serviceName);
+      if (!svc?.Image) return null;
+      // <repo>:<tag> — splitte am letzten Doppelpunkt (repos koennen ports enthalten)
+      const colonIdx = svc.Image.lastIndexOf(':');
+      if (colonIdx < 0) return svc.Image;
+      const tagPart = svc.Image.slice(colonIdx + 1);
+      // Falls digest (sha256:...) angehaengt: nur den Tag vor dem @ nehmen
+      const atIdx = tagPart.indexOf('@');
+      return atIdx >= 0 ? tagPart.slice(0, atIdx) : tagPart;
+    };
+
+    const findStatus = (serviceName: string): string | null => {
+      const svc = services.find(s => s.Service === serviceName);
+      return svc?.State ?? null;
+    };
+
+    reply(send, commandId, true, {
+      result: {
+        slug,
+        versions: {
+          synapse:  findImage('synapse'),
+          postgres: findImage('postgres'),
+          minio:    findImage('minio'),
+        },
+        states: {
+          synapse:  findStatus('synapse'),
+          postgres: findStatus('postgres'),
+          minio:    findStatus('minio'),
+        },
+        scannedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err: any) {
+    logger.error(`[tenant-box] report_versions failed for ${slug}: ${err?.message ?? err}`);
+    reply(send, commandId, false, { error: String(err?.message ?? err) });
+  }
+}
+
+export async function handleTenantBoxHealthcheck(
+  commandId: string,
+  args: Record<string, unknown>,
+  send: SendFn,
+): Promise<void> {
+  const slug = String(args.slug ?? '');
+  const synapsePort = Number(args.synapsePort);
+  const minioPort = Number(args.minioPort);
+  if (!slug || !Number.isFinite(synapsePort) || !Number.isFinite(minioPort)) {
+    reply(send, commandId, false, { error: 'slug + synapsePort + minioPort required' });
+    return;
+  }
+  const dir = tenantDir(slug);
+  const composeFile = path.join(dir, 'docker-compose.yml');
+
+  try {
+    if (!await fs.stat(composeFile).then(() => true).catch(() => false)) {
+      reply(send, commandId, false, { error: `tenant-box ${slug} existiert nicht` });
+      return;
+    }
+
+    const checks: Array<{ component: string; ok: boolean; durationMs: number; detail?: string }> = [];
+
+    // 1. Synapse /_matrix/client/versions (auf 127.0.0.1:port)
+    {
+      const start = Date.now();
+      const r = await safeExec('curl', [
+        '-sS', '--max-time', '5', '-o', '/dev/null', '-w', '%{http_code}',
+        `http://127.0.0.1:${synapsePort}/_matrix/client/versions`,
+      ], { ignoreExitCode: true });
+      const code = r.stdout.trim();
+      checks.push({
+        component: 'synapse_api',
+        ok: code === '200',
+        durationMs: Date.now() - start,
+        detail: code === '200' ? undefined : `http=${code}`,
+      });
+    }
+
+    // 2. Synapse /_matrix/client/v3/sync as proxy for sync-loop liveness
+    //    (eigentlich braucht's einen Login fuer 200 — wir akzeptieren auch
+    //    401/403 als "Synapse antwortet richtig", nur 5xx ist fail)
+    {
+      const start = Date.now();
+      const r = await safeExec('curl', [
+        '-sS', '--max-time', '5', '-o', '/dev/null', '-w', '%{http_code}',
+        `http://127.0.0.1:${synapsePort}/_matrix/client/v3/sync?timeout=0`,
+      ], { ignoreExitCode: true });
+      const code = parseInt(r.stdout.trim(), 10);
+      const ok = !isNaN(code) && code >= 200 && code < 500; // 401/403 ok
+      checks.push({
+        component: 'synapse_sync',
+        ok,
+        durationMs: Date.now() - start,
+        detail: ok ? undefined : `http=${r.stdout.trim()}`,
+      });
+    }
+
+    // 3. Postgres-Connection ueber den Compose-Container (psql -c 'SELECT 1')
+    {
+      const start = Date.now();
+      const r = await safeExec('docker', [
+        'compose', '-f', composeFile, 'exec', '-T', 'postgres',
+        'pg_isready', '-U', 'synapse', '-d', 'synapse',
+      ], { ignoreExitCode: true });
+      checks.push({
+        component: 'postgres',
+        ok: r.exitCode === 0,
+        durationMs: Date.now() - start,
+        detail: r.exitCode === 0 ? undefined : (r.stderr || r.stdout || `exit=${r.exitCode}`).slice(0, 200),
+      });
+    }
+
+    // 4. MinIO /minio/health/live
+    {
+      const start = Date.now();
+      const r = await safeExec('curl', [
+        '-sS', '--max-time', '5', '-o', '/dev/null', '-w', '%{http_code}',
+        `http://127.0.0.1:${minioPort}/minio/health/live`,
+      ], { ignoreExitCode: true });
+      const code = r.stdout.trim();
+      checks.push({
+        component: 'minio',
+        ok: code === '200',
+        durationMs: Date.now() - start,
+        detail: code === '200' ? undefined : `http=${code}`,
+      });
+    }
+
+    const allOk = checks.every(c => c.ok);
+    reply(send, commandId, true, {
+      result: {
+        slug,
+        ok: allOk,
+        checks,
+        checkedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err: any) {
+    logger.error(`[tenant-box] healthcheck failed for ${slug}: ${err?.message ?? err}`);
+    reply(send, commandId, false, { error: String(err?.message ?? err) });
+  }
+}
+
 export async function handleTenantBoxSnapshot(
   commandId: string,
   args: Record<string, unknown>,

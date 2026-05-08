@@ -17,8 +17,12 @@ const COMMAND_MAP = {
     'module.status': { command: 'docker', args: () => ['ps', '--filter', 'label=prilog.module', '--format', '{{.Names}}\t{{.Status}}'] },
     'system.status': { command: 'bash', args: () => ['-c', 'uptime && free -m && df -h /mnt/prilog-data'] },
     'system.df': { command: 'df', args: () => ['-h', '/mnt/prilog-data'] },
-    'agent.update': { command: 'bash', args: () => ['-c', 'cd /opt/prilog-agent && git pull && sudo systemctl restart prilog-agent'] },
-    'agent.version': { command: 'bash', args: () => ['-c', 'cat /opt/prilog-agent/package.json | grep version'] },
+    // Erkennt automatisch ob Agent unter /opt/prilog-agent (neuer Tenant-Box-Layout)
+    // oder /opt/prilog/agent (alter dedicated-Layout) installiert ist.
+    // git config safe.directory fixt "dubious ownership" wenn Agent als root laeuft
+    // aber Repo unter anderem User gecloned wurde.
+    'agent.update': { command: 'bash', args: () => ['-c', 'AGENT_DIR=/opt/prilog-agent; [ -d "$AGENT_DIR" ] || AGENT_DIR=/opt/prilog/agent; git config --global --add safe.directory "$AGENT_DIR" 2>/dev/null; cd "$AGENT_DIR" && git pull && npm install --legacy-peer-deps --silent && npm run build && (sudo systemctl restart prilog-agent || systemctl restart prilog-agent)'] },
+    'agent.version': { command: 'bash', args: () => ['-c', 'AGENT_DIR=/opt/prilog-agent; [ -d "$AGENT_DIR" ] || AGENT_DIR=/opt/prilog/agent; cat "$AGENT_DIR/package.json" | grep version'] },
 };
 async function executeCommand(command, args) {
     const start = Date.now();

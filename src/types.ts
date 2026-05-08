@@ -120,7 +120,9 @@ export type CommandName =
   | 'tenant-box.import'
   | 'tenant-box.backup'
   | 'tenant-box.rewrite_nginx'
-  | 'tenant-box.legacy_cleanup';
+  | 'tenant-box.legacy_cleanup'
+  | 'tenant-box.report_versions'
+  | 'tenant-box.healthcheck';
 
 export interface ServerCommandPayload {
   commandId: string;

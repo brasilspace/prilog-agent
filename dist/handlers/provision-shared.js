@@ -245,6 +245,14 @@ volumes:
         // ── Step 4: Synapse starten ──────────────────────────────────
         report('start_containers', 'running');
         await (0, safe_exec_js_1.safeExec)('docker', ['compose', '-f', `${tenantDir}/docker-compose.yml`, 'up', '-d']);
+        // Volume-Permissions fuer Synapse-User (UID 991) korrigieren — sonst
+        // wirft jeder Media-Upload PermissionError beim Anlegen von
+        // /data/media_store/local_content. Docker Named-Volumes erben die
+        // Owner-Perms vom Image-Mountpoint (root:root), nicht vom Container-User.
+        await (0, safe_exec_js_1.safeExec)('docker', [
+            'exec', '--user', 'root', `synapse-${config.slug}`,
+            'chown', '-R', '991:991', '/data/media_store',
+        ]);
         // Warten auf Health-Check (max 60s)
         let healthy = false;
         for (let i = 0; i < 30; i++) {
@@ -307,6 +315,22 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-Tenant ${config.domain};
         proxy_ssl_server_name on;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+    }
+
+    # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.
+    # Pfade die mit "tenant-" anfangen werden direkt an MinIO geroutet, damit
+    # die Signatur in presigned URLs stimmt (kein /s3 Prefix-Rewrite).
+    location ~ ^/tenant- {
+        proxy_pass http://127.0.0.1:9000;
+        proxy_set_header Host ${config.domain};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        client_max_body_size 200m;
     }
 
     # SSE Stream — kein Buffering
