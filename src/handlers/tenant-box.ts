@@ -19,7 +19,7 @@
  * mit klaren Meldungen reported, kein Silent-Fail.
  */
 
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { safeExec } from '../provision/engine/safe-exec.js';
@@ -30,6 +30,19 @@ import { logger } from '../utils/logger.js';
 const TENANT_BOX_ROOT = '/srv/tenants';
 const SNAPSHOT_DIR = '/var/lib/prilog/snapshots';
 const MANIFEST_SCHEMA_VERSION = 1;
+
+// Der prilog_matrix_connector ist KEIN pip-Paket im Synapse-Image — er wird
+// als Quellverzeichnis in den Container gemountet (PYTHONPATH). Ohne diesen
+// Mount crasht Synapse beim Start im Crash-Loop, sobald der modules:-Block
+// in homeserver.yaml das Modul referenziert (rssw-Incident 2026-05-18).
+// Die Source ist mit dem Agent GEBÜNDELT (assets/) → kein Netz/Git nötig,
+// funktioniert deterministisch für jeden künftigen Tenant. Pfad relativ zur
+// kompilierten Datei: dist/handlers/tenant-box.js → <repo>/assets/...
+const BUNDLED_CONNECTOR_DIR = path.resolve(
+  __dirname,
+  '../../assets/prilog-matrix-connector',
+);
+const CONNECTOR_CONTAINER_DIR = '/modules/prilog-matrix-connector';
 
 // Default-Versionen — werden langfristig vom Backend überschrieben (Version-
 // Registry, siehe Konzept Sektion 4). Hier nur Fallback.
@@ -269,8 +282,11 @@ services:
       - ./signing.key:/data/signing.key:ro
       - ./log.config:/data/log.config:ro
       - ./synapse/media_store:/data/media_store
+      - ./connectors/prilog-matrix-connector:${CONNECTOR_CONTAINER_DIR}:ro
     environment:
       - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+      - PYTHONPATH=${CONNECTOR_CONTAINER_DIR}/src
+      - PYTHONUNBUFFERED=1
     mem_limit: 512m
     cpus: 0.5
     networks:
@@ -323,6 +339,19 @@ async function writeBoxDirectory(config: TenantBoxConfig): Promise<void> {
   // Errors die schwer zu debuggen sind.
   await safeExec('chown', ['-R', '70:70', path.join(dir, 'postgres')]);
   await safeExec('chown', ['-R', '991:991', path.join(dir, 'synapse', 'media_store')]);
+
+  // Connector-Source pro Tenant ablegen (Mount-Ziel ./connectors/...).
+  // MUSS vor `docker compose up` liegen, sonst legt Synapse einen leeren
+  // root-owned Mount an und crasht (ModuleNotFound → Crash-Loop). Quelle
+  // ist mit dem Agent gebündelt — fehlt sie, ist der Agent-Build kaputt:
+  // laut scheitern statt eine login-untaugliche Box auszuliefern.
+  if (!existsSync(path.join(BUNDLED_CONNECTOR_DIR, 'src', 'prilog_matrix_connector', 'module.py'))) {
+    throw new Error(
+      `Gebündelte Connector-Source fehlt: ${BUNDLED_CONNECTOR_DIR} — Agent-Deploy unvollständig (assets/ nicht ausgeliefert)`,
+    );
+  }
+  await fs.mkdir(path.join(dir, 'connectors'), { recursive: true });
+  await safeExec('cp', ['-a', BUNDLED_CONNECTOR_DIR, path.join(dir, 'connectors') + '/']);
 
   // Files
   await fs.writeFile(path.join(dir, 'docker-compose.yml'), renderDockerCompose(config), 'utf8');
