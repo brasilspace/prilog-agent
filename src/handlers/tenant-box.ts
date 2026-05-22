@@ -451,12 +451,6 @@ server {
         proxy_ssl_server_name on;
     }
 
-    location ~ ^/tenant- {
-        proxy_pass http://127.0.0.1:9000;
-        proxy_set_header Host ${config.domain};
-        client_max_body_size 200m;
-    }
-
     location / {
         root /var/www/prilog-web-client;
         try_files $uri $uri/ /index.html;

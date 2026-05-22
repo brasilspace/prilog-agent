@@ -93,20 +93,11 @@ server {
         proxy_set_header Connection 'upgrade';
     }
 
-    # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.
-    # SDK signiert https://<host>/<bucket>/<key>; nginx leitet ohne Path-Rewrite
-    # weiter, MinIO sieht denselben Pfad → Signatur stimmt. Nur Pfade die mit
-    # "tenant-" anfangen werden geroutet, damit der SPA-Fallback an "/" intakt
-    # bleibt.
-    location ~ ^/tenant- {
-        proxy_pass http://127.0.0.1:9000;
-        proxy_set_header Host ${cfg.matrixDomain};
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_request_buffering off;
-        client_max_body_size 200m;
-    }
+    # MinIO S3 proxy: per-Tenant prefix-Block wird vom Tenant-Provisioning
+    # erzeugt (tenant-box.ts: location /tenant-<slug>/). KEIN globaler
+    # Regex-Block hier — der haette Vorrang vor prefix-Match und wuerde alle
+    # /tenant-*/ Pfade auf 9000 routen (Port existiert nicht mehr seit
+    # per-Tenant-MinIO).
 
     # Prilog Web Client (SPA fallback)
     root /var/www/prilog-web-client;
