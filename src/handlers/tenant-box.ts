@@ -1323,6 +1323,10 @@ export async function handleTenantBoxRestore(
   const encryptionKeyHex = String(args.encryptionKeyHex ?? '');
   const s3 = args.s3 as { endpoint: string; accessKeyId: string; secretAccessKey: string; bucket: string; key: string } | undefined;
   const inPlace = args.inPlace !== false; // default true: replace existing
+  // overridePorts erlaubt dem Backend, beim Restore neue Host-Ports zu wählen
+  // (z.B. weil die manifest-Ports auf dem Ziel-Host belegt sind). Wenn gesetzt,
+  // patchen wir manifest.json und docker-compose.yml VOR `compose up`.
+  const overridePorts = args.overridePorts as { synapse?: number; minio?: number } | undefined;
 
   if (!slug || !expectedSha256 || !encryptionKeyHex || encryptionKeyHex.length !== 64 || !s3) {
     reply(send, commandId, false, { error: 'slug + expectedSha256 + encryptionKeyHex + s3 required' });
@@ -1370,13 +1374,43 @@ export async function handleTenantBoxRestore(
     await fs.mkdir(dir, { recursive: true });
     await safeExec('tar', ['-xzf', tarballDownload, '-C', dir]);
 
+    // 5b. Port-Override anwenden (wenn vom Backend angefragt) — VOR compose up,
+    // damit die neuen Ports beim ersten Container-Start gebunden werden.
+    // Patcht manifest.json (ports.synapse/minio) und docker-compose.yml
+    // (Host-Port-Mappings 0.0.0.0:<old>:8008 und 127.0.0.1:<old>:9000).
+    const composeFile = path.join(dir, 'docker-compose.yml');
+    const manifestPath = path.join(dir, 'manifest.json');
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    const oldSynapsePort = manifest.ports?.synapse ?? 8100;
+    const oldMinioPort = manifest.ports?.minio ?? 9100;
+    const newSynapsePort = overridePorts?.synapse ?? oldSynapsePort;
+    const newMinioPort = overridePorts?.minio ?? oldMinioPort;
+
+    if (newSynapsePort !== oldSynapsePort || newMinioPort !== oldMinioPort) {
+      logger.info(`[tenant-box] restore: port override (synapse ${oldSynapsePort}→${newSynapsePort}, minio ${oldMinioPort}→${newMinioPort})`);
+      manifest.ports = { ...manifest.ports, synapse: newSynapsePort, minio: newMinioPort };
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+      let compose = await fs.readFile(composeFile, 'utf8');
+      // Pattern: "0.0.0.0:8100:8008" (synapse) und "127.0.0.1:9100:9000" (minio).
+      // Wir matchen exakt den alten Host-Port aus dem manifest, nicht jede 4-stellige Zahl.
+      compose = compose.replace(
+        new RegExp(`(0\\.0\\.0\\.0:)${oldSynapsePort}(:8008)`, 'g'),
+        `$1${newSynapsePort}$2`,
+      );
+      compose = compose.replace(
+        new RegExp(`(127\\.0\\.0\\.1:)${oldMinioPort}(:9000)`, 'g'),
+        `$1${newMinioPort}$2`,
+      );
+      await fs.writeFile(composeFile, compose, 'utf8');
+    }
+
     // 6. Volume-Permissions
     await safeExec('chown', ['-R', '70:70', path.join(dir, 'postgres')], { ignoreExitCode: true });
     await safeExec('chown', ['-R', '991:991', path.join(dir, 'synapse', 'media_store')], { ignoreExitCode: true });
     await safeExec('chown', ['991:991', path.join(dir, 'signing.key')], { ignoreExitCode: true });
 
     // 7. Compose up
-    const composeFile = path.join(dir, 'docker-compose.yml');
     await safeExec('docker', ['compose', '-f', composeFile, 'up', '-d', 'postgres', 'minio']);
 
     // Wait healthy
@@ -1396,9 +1430,8 @@ export async function handleTenantBoxRestore(
     // 8. Synapse starten + verify
     await safeExec('docker', ['compose', '-f', composeFile, 'up', '-d', 'synapse']);
 
-    // Manifest lesen für port + domain
-    const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'));
-    const synapsePort = manifest.ports?.synapse ?? 8100;
+    const synapsePort = newSynapsePort;
+    const minioPort = newMinioPort;
     const domain = manifest.domain;
 
     let healthy = false;
@@ -1421,7 +1454,7 @@ export async function handleTenantBoxRestore(
       serverName: manifest.server_name,
       publicBaseUrl: manifest.public_baseurl,
       synapsePort,
-      minioPort: manifest.ports?.minio ?? 9100,
+      minioPort,
       pgPassword: 'unused-restore', // wird von writeNginxConfig nicht gebraucht
       minioRootUser: 'unused',
       minioRootPassword: 'unused-pw',
@@ -1441,6 +1474,7 @@ export async function handleTenantBoxRestore(
       result: {
         slug,
         synapsePort,
+        minioPort,
         domain,
         healthy: true,
         durationMs: Date.now() - start,
