@@ -449,6 +449,12 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Real-Tenant ${config.domain};
         proxy_ssl_server_name on;
+        # WebSocket-Upgrade fuer Y.js Collab (Tiptap-Docs, Sheets), Agent-WS
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 
     location / {
