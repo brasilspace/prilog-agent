@@ -320,18 +320,10 @@ server {
         proxy_set_header Connection 'upgrade';
     }
 
-    # MinIO S3 proxy — direct path forwarding fuer presigned URL Signatur-Match.
-    # Pfade die mit "tenant-" anfangen werden direkt an MinIO geroutet, damit
-    # die Signatur in presigned URLs stimmt (kein /s3 Prefix-Rewrite).
-    location ~ ^/tenant- {
-        proxy_pass http://127.0.0.1:9000;
-        proxy_set_header Host ${config.domain};
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_request_buffering off;
-        client_max_body_size 200m;
-    }
+    # MinIO S3 proxy: per-Tenant prefix-Block wird beim Tenant-Provisioning
+    # erzeugt (siehe tenant-box.ts: location /tenant-<slug>/). Hier KEIN
+    # globaler Regex-Block, der zu Port 9000 routet — den gibt es nicht mehr
+    # auf shared-Hosts (per-Tenant-MinIO auf 91xx).
 
     # SSE Stream — kein Buffering
     location /api/platform/v1/workflow/events/stream {

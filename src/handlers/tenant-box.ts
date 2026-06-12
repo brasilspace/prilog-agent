@@ -443,6 +443,18 @@ server {
         client_max_body_size 200m;
     }
 
+    # SSE-Stream (Workflow-Events) — kein Buffering, langer Timeout. Muss VOR
+    # dem generischen /api/-Block stehen (laengster Praefix gewinnt, Reihenfolge egal).
+    location /api/platform/v1/workflow/events/stream {
+        proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Real-Tenant ${config.domain};
+        proxy_ssl_server_name on;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+    }
+
     location /api/ {
         proxy_pass https://api.prilog.chat/api/;
         proxy_set_header Host api.prilog.chat;

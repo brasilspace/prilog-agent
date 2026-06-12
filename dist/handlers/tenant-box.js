@@ -446,18 +446,30 @@ server {
         client_max_body_size 200m;
     }
 
+    # SSE-Stream (Workflow-Events) — kein Buffering, langer Timeout. Muss VOR
+    # dem generischen /api/-Block stehen (laengster Praefix gewinnt, Reihenfolge egal).
+    location /api/platform/v1/workflow/events/stream {
+        proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;
+        proxy_set_header Host api.prilog.chat;
+        proxy_set_header X-Real-Tenant ${config.domain};
+        proxy_ssl_server_name on;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+    }
+
     location /api/ {
         proxy_pass https://api.prilog.chat/api/;
         proxy_set_header Host api.prilog.chat;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Real-Tenant ${config.domain};
         proxy_ssl_server_name on;
-    }
-
-    location ~ ^/tenant- {
-        proxy_pass http://127.0.0.1:9000;
-        proxy_set_header Host ${config.domain};
-        client_max_body_size 200m;
+        # WebSocket-Upgrade fuer Y.js Collab (Tiptap-Docs, Sheets), Agent-WS
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 
     location / {
@@ -1234,6 +1246,10 @@ async function handleTenantBoxRestore(commandId, args, send) {
     const encryptionKeyHex = String(args.encryptionKeyHex ?? '');
     const s3 = args.s3;
     const inPlace = args.inPlace !== false; // default true: replace existing
+    // overridePorts erlaubt dem Backend, beim Restore neue Host-Ports zu wählen
+    // (z.B. weil die manifest-Ports auf dem Ziel-Host belegt sind). Wenn gesetzt,
+    // patchen wir manifest.json und docker-compose.yml VOR `compose up`.
+    const overridePorts = args.overridePorts;
     if (!slug || !expectedSha256 || !encryptionKeyHex || encryptionKeyHex.length !== 64 || !s3) {
         reply(send, commandId, false, { error: 'slug + expectedSha256 + encryptionKeyHex + s3 required' });
         return;
@@ -1272,12 +1288,33 @@ async function handleTenantBoxRestore(commandId, args, send) {
         // 5. Extrahieren
         await node_fs_1.promises.mkdir(dir, { recursive: true });
         await (0, safe_exec_js_1.safeExec)('tar', ['-xzf', tarballDownload, '-C', dir]);
+        // 5b. Port-Override anwenden (wenn vom Backend angefragt) — VOR compose up,
+        // damit die neuen Ports beim ersten Container-Start gebunden werden.
+        // Patcht manifest.json (ports.synapse/minio) und docker-compose.yml
+        // (Host-Port-Mappings 0.0.0.0:<old>:8008 und 127.0.0.1:<old>:9000).
+        const composeFile = node_path_1.default.join(dir, 'docker-compose.yml');
+        const manifestPath = node_path_1.default.join(dir, 'manifest.json');
+        const manifest = JSON.parse(await node_fs_1.promises.readFile(manifestPath, 'utf8'));
+        const oldSynapsePort = manifest.ports?.synapse ?? 8100;
+        const oldMinioPort = manifest.ports?.minio ?? 9100;
+        const newSynapsePort = overridePorts?.synapse ?? oldSynapsePort;
+        const newMinioPort = overridePorts?.minio ?? oldMinioPort;
+        if (newSynapsePort !== oldSynapsePort || newMinioPort !== oldMinioPort) {
+            logger_js_1.logger.info(`[tenant-box] restore: port override (synapse ${oldSynapsePort}→${newSynapsePort}, minio ${oldMinioPort}→${newMinioPort})`);
+            manifest.ports = { ...manifest.ports, synapse: newSynapsePort, minio: newMinioPort };
+            await node_fs_1.promises.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+            let compose = await node_fs_1.promises.readFile(composeFile, 'utf8');
+            // Pattern: "0.0.0.0:8100:8008" (synapse) und "127.0.0.1:9100:9000" (minio).
+            // Wir matchen exakt den alten Host-Port aus dem manifest, nicht jede 4-stellige Zahl.
+            compose = compose.replace(new RegExp(`(0\\.0\\.0\\.0:)${oldSynapsePort}(:8008)`, 'g'), `$1${newSynapsePort}$2`);
+            compose = compose.replace(new RegExp(`(127\\.0\\.0\\.1:)${oldMinioPort}(:9000)`, 'g'), `$1${newMinioPort}$2`);
+            await node_fs_1.promises.writeFile(composeFile, compose, 'utf8');
+        }
         // 6. Volume-Permissions
         await (0, safe_exec_js_1.safeExec)('chown', ['-R', '70:70', node_path_1.default.join(dir, 'postgres')], { ignoreExitCode: true });
         await (0, safe_exec_js_1.safeExec)('chown', ['-R', '991:991', node_path_1.default.join(dir, 'synapse', 'media_store')], { ignoreExitCode: true });
         await (0, safe_exec_js_1.safeExec)('chown', ['991:991', node_path_1.default.join(dir, 'signing.key')], { ignoreExitCode: true });
         // 7. Compose up
-        const composeFile = node_path_1.default.join(dir, 'docker-compose.yml');
         await (0, safe_exec_js_1.safeExec)('docker', ['compose', '-f', composeFile, 'up', '-d', 'postgres', 'minio']);
         // Wait healthy
         let pgReady = false, minioReady = false;
@@ -1295,9 +1332,8 @@ async function handleTenantBoxRestore(commandId, args, send) {
         }
         // 8. Synapse starten + verify
         await (0, safe_exec_js_1.safeExec)('docker', ['compose', '-f', composeFile, 'up', '-d', 'synapse']);
-        // Manifest lesen für port + domain
-        const manifest = JSON.parse(await node_fs_1.promises.readFile(node_path_1.default.join(dir, 'manifest.json'), 'utf8'));
-        const synapsePort = manifest.ports?.synapse ?? 8100;
+        const synapsePort = newSynapsePort;
+        const minioPort = newMinioPort;
         const domain = manifest.domain;
         let healthy = false;
         for (let i = 0; i < 18; i++) { // 3 min — Synapse-DB-Init kann nach Restore länger dauern
@@ -1321,7 +1357,7 @@ async function handleTenantBoxRestore(commandId, args, send) {
             serverName: manifest.server_name,
             publicBaseUrl: manifest.public_baseurl,
             synapsePort,
-            minioPort: manifest.ports?.minio ?? 9100,
+            minioPort,
             pgPassword: 'unused-restore', // wird von writeNginxConfig nicht gebraucht
             minioRootUser: 'unused',
             minioRootPassword: 'unused-pw',
@@ -1339,6 +1375,7 @@ async function handleTenantBoxRestore(commandId, args, send) {
             result: {
                 slug,
                 synapsePort,
+                minioPort,
                 domain,
                 healthy: true,
                 durationMs: Date.now() - start,

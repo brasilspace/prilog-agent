@@ -328,12 +328,10 @@ async function writeTenantNginxConfig(slug, domain, synapsePort) {
         proxy_set_header Connection 'upgrade';
     }
 
-    location ~ ^/tenant- {
-        proxy_pass http://127.0.0.1:9000;
-        proxy_set_header Host ${domain};
-        proxy_request_buffering off;
-        client_max_body_size 200m;
-    }
+    # MinIO S3 proxy: per-Tenant prefix-Block (location /tenant-${slug}/)
+    # wird durch tenant-box.ts erzeugt. KEIN globaler Regex-Block — er haette
+    # Vorrang vor prefix-Match und wuerde zu Port 9000 routen, der seit der
+    # per-Tenant-MinIO-Architektur nicht mehr existiert.
 
     location /api/platform/v1/workflow/events/stream {
         proxy_pass https://api.prilog.chat/api/platform/v1/workflow/events/stream;
