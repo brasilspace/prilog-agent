@@ -178,6 +178,40 @@ enable_registration_without_verification: false
 
 report_stats: false
 
+# Prilog: grosszuegige Rate-Limits (Single-School-Instanz + Bulk-Admin-Provisionierung).
+# Synapse-Defaults (rc_room_creation 0.016/s, rc_invites.per_user 0.003/s) wuerden
+# Massen-Anlage (Klassen-Generator ~80 Raeume) auf Stunden / 429-Stalls drosseln.
+# Login/Registrierung-Schutz bleibt Default.
+rc_message:
+  per_second: 100
+  burst_count: 1000
+rc_joins:
+  local:
+    per_second: 100
+    burst_count: 1000
+  remote:
+    per_second: 100
+    burst_count: 1000
+rc_joins_per_room:
+  per_second: 100
+  burst_count: 1000
+rc_invites:
+  per_room:
+    per_second: 100
+    burst_count: 1000
+  per_user:
+    per_second: 100
+    burst_count: 1000
+  per_issuer:
+    per_second: 100
+    burst_count: 1000
+rc_room_creation:
+  per_second: 100
+  burst_count: 1000
+rc_admin_redaction:
+  per_second: 100
+  burst_count: 1000
+
 signing_key_path: /data/signing.key
 
 trusted_key_servers: []
