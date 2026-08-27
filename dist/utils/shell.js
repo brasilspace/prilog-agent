@@ -167,7 +167,12 @@ async function executeCommand(command, args) {
                 };
             }
             catch {
-                checks.synapseVersion = { status: 'warning', message: 'Synapse-Version nicht abrufbar' };
+                // Tenant-Box-Architektur: Synapse laeuft NICHT auf 8008, sondern pro
+                // Tenant auf 8100-8299 (Multi-Tenant-Host). Ein fehlendes 8008 ist
+                // daher der Normalfall, KEIN Fehler — Synapse-Health deckt ohnehin der
+                // Backend-`jwt-login-watch` + der taegliche Smoke pro Tenant ab.
+                // (Frueher: false-warning → Dauer-WARNUNG im Wartungsbericht.)
+                checks.synapseVersion = { status: 'ok', message: 'n/a — Per-Tenant-Synapse (Health via Backend login-watch/smoke)' };
             }
             // 6. Backup-Alter (letztes Backup pruefen)
             try {
@@ -178,7 +183,12 @@ async function executeCommand(command, args) {
                 const [tsStr, file] = backup.stdout.trim().split(' ', 2);
                 const ts = parseInt(tsStr);
                 if (ts === 0) {
-                    checks.backup = { status: 'error', message: 'Kein Backup gefunden' };
+                    // Kein host-lokales Backup ist der Normalfall: Backups laufen
+                    // per-Tenant nach S3 (tenant_backup), ueberwacht vom Backend-
+                    // `backup-stale-watch`. Der alte host-lokale Pfad
+                    // /mnt/prilog-data/backups existiert in der Tenant-Box-Architektur
+                    // nicht mehr → frueher false-error/„Kein Backup" → Dauer-WARNUNG.
+                    checks.backup = { status: 'ok', message: 'Per-Tenant-S3-Backup (Backend backup-stale-watch)' };
                 }
                 else {
                     const ageHours = Math.floor((Date.now() / 1000 - ts) / 3600);

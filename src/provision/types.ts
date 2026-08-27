@@ -10,6 +10,7 @@ export const STEP_NAMES = [
   'install_nginx',
   'generate_synapse',
   'install_matrix_connector',
+  'install_managed_rooms',
   'deploy_web_client',
   'write_compose',
   'start_containers',
@@ -61,10 +62,31 @@ export interface MatrixConnectorModuleConfig {
   config: MatrixConnectorRuntimeConfig;
 }
 
+/**
+ * synapse-managed-rooms: schliesst die sechs Wege, auf denen an Prilog vorbei
+ * Raeume entstehen. Die Werte kommen fertig berechnet aus dem Backend — der
+ * Agent denkt sich hier nichts aus, er schreibt nur, was ihm gesagt wird.
+ */
+export interface ManagedRoomsRuntimeConfig {
+  deny: string[];
+  exempt: Array<{ match: string; allow: string[] }>;
+  allow_direct_messages: boolean;
+  allow_invited_joins: boolean;
+}
+
+export interface ManagedRoomsModuleConfig {
+  enabled: boolean;
+  moduleName: string;
+  moduleClass: string;
+  packageUrl?: string;
+  config: ManagedRoomsRuntimeConfig;
+}
+
 export interface SynapseModulesConfig {
   installPlan: SynapseModuleInstallPlanEntry[];
   enabledModules: EnabledSynapseModuleSummary[];
   connector: MatrixConnectorModuleConfig | null;
+  managedRooms?: ManagedRoomsModuleConfig | null;
 }
 
 export interface ProvisionConfig {

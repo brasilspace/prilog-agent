@@ -18,6 +18,7 @@ const _04_mount_volume_js_1 = require("./steps/04-mount-volume.js");
 const _05_install_nginx_js_1 = require("./steps/05-install-nginx.js");
 const _06_generate_synapse_js_1 = require("./steps/06-generate-synapse.js");
 const _06b_install_matrix_connector_js_1 = require("./steps/06b-install-matrix-connector.js");
+const _06d_install_managed_rooms_js_1 = require("./steps/06d-install-managed-rooms.js");
 const _06c_deploy_web_client_js_1 = require("./steps/06c-deploy-web-client.js");
 const _07_write_compose_js_1 = require("./steps/07-write-compose.js");
 const _08_start_containers_js_1 = require("./steps/08-start-containers.js");
@@ -34,6 +35,7 @@ registry.register({ name: 'mount_volume', fn: _04_mount_volume_js_1.stepMountVol
 registry.register({ name: 'install_nginx', fn: _05_install_nginx_js_1.stepInstallNginx, verify: _05_install_nginx_js_1.verifyInstallNginx });
 registry.register({ name: 'generate_synapse', fn: _06_generate_synapse_js_1.stepGenerateSynapse, verify: _06_generate_synapse_js_1.verifyGenerateSynapse });
 registry.register({ name: 'install_matrix_connector', fn: _06b_install_matrix_connector_js_1.stepInstallMatrixConnector, verify: _06b_install_matrix_connector_js_1.verifyInstallMatrixConnector });
+registry.register({ name: 'install_managed_rooms', fn: _06d_install_managed_rooms_js_1.stepInstallManagedRooms, verify: _06d_install_managed_rooms_js_1.verifyInstallManagedRooms });
 registry.register({ name: 'deploy_web_client', fn: _06c_deploy_web_client_js_1.stepDeployWebClient, verify: _06c_deploy_web_client_js_1.verifyDeployWebClient });
 registry.register({ name: 'write_compose', fn: _07_write_compose_js_1.stepWriteCompose, verify: _07_write_compose_js_1.verifyWriteCompose });
 registry.register({ name: 'start_containers', fn: _08_start_containers_js_1.stepStartContainers, verify: _08_start_containers_js_1.verifyStartContainers });

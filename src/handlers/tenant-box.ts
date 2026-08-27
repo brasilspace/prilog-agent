@@ -22,6 +22,7 @@
 import { promises as fs, existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { stringify as stringifyYaml } from 'yaml';
 import { safeExec } from '../provision/engine/safe-exec.js';
 import { logger } from '../utils/logger.js';
 
@@ -43,6 +44,19 @@ const BUNDLED_CONNECTOR_DIR = path.resolve(
   '../../assets/prilog-matrix-connector',
 );
 const CONNECTOR_CONTAINER_DIR = '/modules/prilog-matrix-connector';
+
+// synapse-managed-rooms: schliesst die sechs Wege, auf denen an Prilog vorbei
+// Raeume entstehen. Gleiche Mechanik wie beim Connector — Quellverzeichnis
+// gebuendelt im Agent, in den Container gemountet, ueber PYTHONPATH gefunden.
+// Ohne Mount und mit modules:-Eintrag laeuft Synapse in den Crash-Loop
+// (rssw-Incident 2026-05-18), deshalb haengen Mount und Eintrag hier an
+// EINER Bedingung: config.managedRooms.
+const BUNDLED_MANAGED_ROOMS_DIR = path.resolve(
+  __dirname,
+  '../../assets/synapse-managed-rooms',
+);
+const MANAGED_ROOMS_CONTAINER_DIR = '/modules/synapse-managed-rooms';
+const MANAGED_ROOMS_MODULE_CLASS = 'synapse_managed_rooms.ManagedRoomsModule';
 
 // Default-Versionen — werden langfristig vom Backend überschrieben (Version-
 // Registry, siehe Konzept Sektion 4). Hier nur Fallback.
@@ -104,6 +118,18 @@ const TenantBoxConfigSchema = z.object({
   // der bereits aus dem importierten DB-Dump).
   adminUsername: z.string().nullish(),
   adminPassword: z.string().nullish(),
+
+  // synapse-managed-rooms. Fehlt der Block, bleibt das Modul aus — so bekommen
+  // Bestandsboxen es nicht als Nebenwirkung eines Agent-Updates untergeschoben.
+  // Der Agent rechnet hier nichts aus: deny/exempt kommen fertig aus dem
+  // Backend (lib/managed-rooms-config.ts), weil ein falsches Dienstkonto-Muster
+  // Prilog aus dem eigenen Homeserver aussperrt.
+  managedRooms: z.object({
+    deny: z.array(z.string()),
+    exempt: z.array(z.object({ match: z.string(), allow: z.array(z.string()) })).min(1),
+    allow_direct_messages: z.boolean(),
+    allow_invited_joins: z.boolean(),
+  }).nullish(),
 });
 
 export type TenantBoxConfig = z.infer<typeof TenantBoxConfigSchema>;
@@ -135,6 +161,20 @@ function generateSigningKey(): string {
 }
 
 // ─── Template-Rendering ─────────────────────────────────────────────────────
+
+function renderManagedRoomsBlock(config: TenantBoxConfig): string {
+  if (!config.managedRooms) return '';
+
+  // Kein handgeschriebenes YAML. Die exempt-Muster enthalten Backslashes und
+  // Sonderzeichen; ein Anfuehrungszeichen daneben und Synapse liest einen
+  // anderen regulaeren Ausdruck als gemeint — bei einer Zugriffsregel ist das
+  // kein Schoenheitsfehler. `yaml` maskiert korrekt.
+  const block = stringifyYaml({
+    modules: [{ module: MANAGED_ROOMS_MODULE_CLASS, config: config.managedRooms }],
+  });
+
+  return `\n# synapse-managed-rooms — Raeume entstehen in Prilog, nicht nebenher.\n${block}`;
+}
 
 function renderHomeserverYaml(config: TenantBoxConfig): string {
   const federationDisabled = config.tier === 'free' || config.tier === 'pro';
@@ -220,6 +260,7 @@ trusted_key_servers: []
 suppress_key_server_warning: true
 ${federationBlock}
 log_config: "/data/log.config"
+${renderManagedRoomsBlock(config)}
 `.trim();
 }
 
@@ -316,10 +357,11 @@ services:
       - ./signing.key:/data/signing.key:ro
       - ./log.config:/data/log.config:ro
       - ./synapse/media_store:/data/media_store
-      - ./connectors/prilog-matrix-connector:${CONNECTOR_CONTAINER_DIR}:ro
+      - ./connectors/prilog-matrix-connector:${CONNECTOR_CONTAINER_DIR}:ro${config.managedRooms ? `
+      - ./modules/synapse-managed-rooms:${MANAGED_ROOMS_CONTAINER_DIR}:ro` : ''}
     environment:
       - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
-      - PYTHONPATH=${CONNECTOR_CONTAINER_DIR}/src
+      - PYTHONPATH=${CONNECTOR_CONTAINER_DIR}/src${config.managedRooms ? `:${MANAGED_ROOMS_CONTAINER_DIR}` : ''}
       - PYTHONUNBUFFERED=1
     mem_limit: 512m
     cpus: 0.5
@@ -386,6 +428,20 @@ async function writeBoxDirectory(config: TenantBoxConfig): Promise<void> {
   }
   await fs.mkdir(path.join(dir, 'connectors'), { recursive: true });
   await safeExec('cp', ['-a', BUNDLED_CONNECTOR_DIR, path.join(dir, 'connectors') + '/']);
+
+  // managed-rooms nur ablegen, wenn es auch in homeserver.yaml referenziert
+  // wird — sonst liegt totes Zeug herum. Umgekehrt waere es schlimmer: ein
+  // modules:-Eintrag ohne Mount ist ein Crash-Loop.
+  if (config.managedRooms) {
+    if (!existsSync(path.join(BUNDLED_MANAGED_ROOMS_DIR, 'synapse_managed_rooms', 'module.py'))) {
+      throw new Error(
+        `managed-rooms-Quellen fehlen im Agent-Paket: ${BUNDLED_MANAGED_ROOMS_DIR} — ` +
+          'ohne sie wuerde Synapse mit dem modules:-Eintrag im Crash-Loop starten',
+      );
+    }
+    await fs.mkdir(path.join(dir, 'modules'), { recursive: true });
+    await safeExec('cp', ['-a', BUNDLED_MANAGED_ROOMS_DIR, path.join(dir, 'modules') + '/']);
+  }
 
   // Files
   await fs.writeFile(path.join(dir, 'docker-compose.yml'), renderDockerCompose(config), 'utf8');
@@ -1761,3 +1817,11 @@ export async function handleTenantBoxImport(
     reply(send, commandId, false, { error: String(err?.message ?? err), result: { importStaging } });
   }
 }
+
+// Nur fuer Tests: die reinen Render-Funktionen. Sie schreiben nichts und
+// rufen nichts auf — genau deshalb lassen sie sich einzeln pruefen.
+export const __testables = {
+  renderHomeserverYaml,
+  renderDockerCompose,
+  renderManagedRoomsBlock,
+};

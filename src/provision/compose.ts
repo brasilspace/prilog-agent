@@ -6,6 +6,8 @@ export const COMPOSE_DIR = '/opt/prilog';
 export const COMPOSE_PATH = `${COMPOSE_DIR}/docker-compose.yml`;
 export const CONNECTOR_HOST_DIR = '/opt/prilog/connectors/prilog-matrix-connector';
 export const CONNECTOR_CONTAINER_DIR = '/modules/prilog-matrix-connector';
+export const MANAGED_ROOMS_HOST_DIR = '/opt/prilog/modules/synapse-managed-rooms';
+export const MANAGED_ROOMS_CONTAINER_DIR = '/modules/synapse-managed-rooms';
 
 function buildSynapsePortBinding(cfg: ProvisionConfig): string {
   const bindAddress = (cfg.synapseBindAddress || '0.0.0.0').trim();
@@ -18,8 +20,18 @@ function buildSynapseEnvironment(cfg: ProvisionConfig): string[] {
     '      SYNAPSE_REPORT_STATS: "no"',
   ];
 
+  // Beide Synapse-Module liegen als eigene Verzeichnisse im Container. Python
+  // will sie als EINEN PYTHONPATH mit Doppelpunkten — nicht als zwei Eintraege,
+  // der zweite wuerde den ersten still ueberschreiben.
+  const pythonPaths: string[] = [];
   if (cfg.synapseModules?.connector?.enabled) {
-    environment.push(`      PYTHONPATH: ${CONNECTOR_CONTAINER_DIR}/src`);
+    pythonPaths.push(`${CONNECTOR_CONTAINER_DIR}/src`);
+  }
+  if (cfg.synapseModules?.managedRooms?.enabled) {
+    pythonPaths.push(MANAGED_ROOMS_CONTAINER_DIR);
+  }
+  if (pythonPaths.length > 0) {
+    environment.push(`      PYTHONPATH: ${pythonPaths.join(':')}`);
   }
 
   return environment;
@@ -30,6 +42,9 @@ function buildSynapseVolumes(cfg: ProvisionConfig): string[] {
 
   if (cfg.synapseModules?.connector?.enabled) {
     volumes.push(`      - ${CONNECTOR_HOST_DIR}:${CONNECTOR_CONTAINER_DIR}:ro`);
+  }
+  if (cfg.synapseModules?.managedRooms?.enabled) {
+    volumes.push(`      - ${MANAGED_ROOMS_HOST_DIR}:${MANAGED_ROOMS_CONTAINER_DIR}:ro`);
   }
 
   return volumes;

@@ -12,6 +12,7 @@ exports.STEP_NAMES = [
     'install_nginx',
     'generate_synapse',
     'install_matrix_connector',
+    'install_managed_rooms',
     'deploy_web_client',
     'write_compose',
     'start_containers',

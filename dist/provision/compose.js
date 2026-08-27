@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CONNECTOR_CONTAINER_DIR = exports.CONNECTOR_HOST_DIR = exports.COMPOSE_PATH = exports.COMPOSE_DIR = void 0;
+exports.MANAGED_ROOMS_CONTAINER_DIR = exports.MANAGED_ROOMS_HOST_DIR = exports.CONNECTOR_CONTAINER_DIR = exports.CONNECTOR_HOST_DIR = exports.COMPOSE_PATH = exports.COMPOSE_DIR = void 0;
 exports.buildComposeContent = buildComposeContent;
 exports.writeComposeFile = writeComposeFile;
 const fs = __importStar(require("fs"));
@@ -41,6 +41,8 @@ exports.COMPOSE_DIR = '/opt/prilog';
 exports.COMPOSE_PATH = `${exports.COMPOSE_DIR}/docker-compose.yml`;
 exports.CONNECTOR_HOST_DIR = '/opt/prilog/connectors/prilog-matrix-connector';
 exports.CONNECTOR_CONTAINER_DIR = '/modules/prilog-matrix-connector';
+exports.MANAGED_ROOMS_HOST_DIR = '/opt/prilog/modules/synapse-managed-rooms';
+exports.MANAGED_ROOMS_CONTAINER_DIR = '/modules/synapse-managed-rooms';
 function buildSynapsePortBinding(cfg) {
     const bindAddress = (cfg.synapseBindAddress || '0.0.0.0').trim();
     return bindAddress === '0.0.0.0' ? '8008:8008' : `${bindAddress}:8008:8008`;
@@ -50,8 +52,18 @@ function buildSynapseEnvironment(cfg) {
         `      SYNAPSE_SERVER_NAME: ${cfg.matrixDomain}`,
         '      SYNAPSE_REPORT_STATS: "no"',
     ];
+    // Beide Synapse-Module liegen als eigene Verzeichnisse im Container. Python
+    // will sie als EINEN PYTHONPATH mit Doppelpunkten — nicht als zwei Eintraege,
+    // der zweite wuerde den ersten still ueberschreiben.
+    const pythonPaths = [];
     if (cfg.synapseModules?.connector?.enabled) {
-        environment.push(`      PYTHONPATH: ${exports.CONNECTOR_CONTAINER_DIR}/src`);
+        pythonPaths.push(`${exports.CONNECTOR_CONTAINER_DIR}/src`);
+    }
+    if (cfg.synapseModules?.managedRooms?.enabled) {
+        pythonPaths.push(exports.MANAGED_ROOMS_CONTAINER_DIR);
+    }
+    if (pythonPaths.length > 0) {
+        environment.push(`      PYTHONPATH: ${pythonPaths.join(':')}`);
     }
     return environment;
 }
@@ -59,6 +71,9 @@ function buildSynapseVolumes(cfg) {
     const volumes = ['      - /mnt/prilog-data/synapse:/data'];
     if (cfg.synapseModules?.connector?.enabled) {
         volumes.push(`      - ${exports.CONNECTOR_HOST_DIR}:${exports.CONNECTOR_CONTAINER_DIR}:ro`);
+    }
+    if (cfg.synapseModules?.managedRooms?.enabled) {
+        volumes.push(`      - ${exports.MANAGED_ROOMS_HOST_DIR}:${exports.MANAGED_ROOMS_CONTAINER_DIR}:ro`);
     }
     return volumes;
 }
