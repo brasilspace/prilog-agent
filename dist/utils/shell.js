@@ -4,6 +4,7 @@ exports.executeCommand = executeCommand;
 exports.spawnLogStream = spawnLogStream;
 const child_process_1 = require("child_process");
 const promises_1 = require("fs/promises");
+const yaml_1 = require("yaml");
 const safe_exec_js_1 = require("../provision/engine/safe-exec.js");
 const _06c_deploy_web_client_js_1 = require("../provision/steps/06c-deploy-web-client.js");
 const COMMAND_MAP = {
@@ -298,6 +299,67 @@ async function executeCommand(command, args) {
         }
         catch (err) {
             return { success: false, output: err?.message ?? 'web_client.update failed', duration: Date.now() - start };
+        }
+    }
+    // ── managed_rooms.status ───────────────────────────────────────
+    // Liest den Modulblock von synapse-managed-rooms aus der homeserver.yaml
+    // und gibt ihn zurueck. Reine Lesefrage — das Backend vergleicht das
+    // exempt-Muster mit dem, was es heute erzeugen wuerde.
+    //
+    // Warum das noetig ist: Das Muster in der Datei ist eine eingefrorene Kopie
+    // von adminUsername + matrixDomain. Wird das Admin-Konto umbenannt oder die
+    // Matrix-Domain geaendert, schreibt niemand die Datei nach — und Prilog
+    // verliert das Recht, im eigenen Homeserver Raeume anzulegen.
+    if (command === 'managed_rooms.status') {
+        try {
+            const slug = args?.slug ? String(args.slug) : null;
+            // Basispfad nur fuer Tests ueberschreibbar — im Betrieb steht er fest.
+            const tenantsRoot = process.env.PRILOG_TENANTS_ROOT || '/srv/tenants';
+            const dedicatedPaths = (process.env.PRILOG_HOMESERVER_YAML || '')
+                .split(':')
+                .filter(Boolean);
+            const candidates = slug
+                ? [`${tenantsRoot}/${slug}/homeserver.yaml`]
+                : dedicatedPaths.length
+                    ? dedicatedPaths
+                    : ['/mnt/prilog-data/synapse/homeserver.yaml', '/opt/prilog/synapse/homeserver.yaml'];
+            let file = null;
+            let raw = null;
+            for (const candidate of candidates) {
+                try {
+                    raw = await (0, promises_1.readFile)(candidate, 'utf8');
+                    file = candidate;
+                    break;
+                }
+                catch {
+                    // naechsten Pfad versuchen
+                }
+            }
+            if (raw === null) {
+                return {
+                    success: false,
+                    output: JSON.stringify({ error: 'homeserver.yaml nicht gefunden', tried: candidates }),
+                    duration: Date.now() - start,
+                };
+            }
+            const doc = (0, yaml_1.parse)(raw);
+            const entry = (doc?.modules ?? []).find((m) => m?.module === 'synapse_managed_rooms.ManagedRoomsModule');
+            return {
+                success: true,
+                output: JSON.stringify({
+                    file,
+                    present: Boolean(entry),
+                    config: entry?.config ?? null,
+                }),
+                duration: Date.now() - start,
+            };
+        }
+        catch (err) {
+            return {
+                success: false,
+                output: JSON.stringify({ error: err?.message ?? 'managed_rooms.status fehlgeschlagen' }),
+                duration: Date.now() - start,
+            };
         }
     }
     const cmdDef = COMMAND_MAP[command];

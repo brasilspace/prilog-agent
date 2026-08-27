@@ -104,6 +104,7 @@ export type CommandName =
   | 'provision'
   | 'shared_tenant.create'
   | 'connector.install'
+  | 'managed_rooms.status'
   | 'web_client.update'
   | 'storage.provision_service_account'
   | 'tenant.snapshot'
