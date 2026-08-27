@@ -8,6 +8,7 @@ set -euo pipefail
 
 AGENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANAGED_ROOMS_SRC="${MANAGED_ROOMS_SRC:-$HOME/synapse-managed-rooms}"
+CONNECTOR_SRC="${CONNECTOR_SRC:-$HOME/prilog-matrix-connector}"
 
 if [ ! -d "$MANAGED_ROOMS_SRC/synapse_managed_rooms" ]; then
   echo "Modul-Repo nicht gefunden: $MANAGED_ROOMS_SRC" >&2
@@ -29,4 +30,22 @@ find "$DEST" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
 VERSION="$(grep -oP '(?<=^__version__ = ")[^"]+' "$DEST/synapse_managed_rooms/__init__.py")"
 echo "synapse-managed-rooms $VERSION nach assets/ uebernommen"
+
+# ── prilog-matrix-connector ─────────────────────────────────────────────────
+# Am 2026-08-27 war dieses Asset 48 Zeilen gedriftet und e2ee_guard.py fehlte
+# ganz — neue Boxen haetten einen Connector ohne E2EE-Waechter bekommen, und
+# auf einem Shared-Host lag ein handgepatchtes module.py. Genau dagegen ist
+# dieses Skript da.
+if [ -d "$CONNECTOR_SRC/src/prilog_matrix_connector" ]; then
+  CDEST="$AGENT_DIR/assets/prilog-matrix-connector"
+  rm -rf "$CDEST/src"
+  mkdir -p "$CDEST/src"
+  cp -a "$CONNECTOR_SRC/src/prilog_matrix_connector" "$CDEST/src/"
+  cp "$CONNECTOR_SRC/pyproject.toml" "$CONNECTOR_SRC/README.md" "$CDEST/"
+  find "$CDEST" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+  echo "prilog-matrix-connector nach assets/ uebernommen"
+else
+  echo "WARNUNG: Connector-Repo nicht unter $CONNECTOR_SRC — Asset bleibt wie es ist." >&2
+fi
+
 echo "Nicht vergessen: git add assets/ && committen."

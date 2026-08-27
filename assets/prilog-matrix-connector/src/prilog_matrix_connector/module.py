@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from .e2ee_guard import E2eeGuard, apply_confidential_creation
 from .helpers import build_creation_payload
 from .policy_client import ConnectorPolicyError, PolicyClient
 
@@ -40,6 +41,10 @@ class ConnectorModuleConfig:
     # nutzbar bis `password_config.localdb_enabled: false` gesetzt wird.
     jwt_secret: str | None
     jwt_issuer: str
+    # E2EE-Encryption-/Marker-Guard (AP-3.4). Default AUS: bis der destruktive
+    # Bestaetigungstest auf einem Wegwerf-Synapse gefahren ist (Owner-Entscheid
+    # B), aendert ein Connector-Update NICHTS am Verhalten der Live-Tenants.
+    e2ee_guard_enabled: bool = False
 
 
 class PrilogMatrixConnectorModule:
@@ -51,6 +56,7 @@ class PrilogMatrixConnectorModule:
             shared_secret=config.shared_secret,
             timeout_seconds=config.request_timeout_seconds,
         )
+        self._e2ee_guard = E2eeGuard()
 
         self._register_callbacks()
 
@@ -65,6 +71,7 @@ class PrilogMatrixConnectorModule:
         request_timeout_seconds = float(config.get("request_timeout_seconds", 5.0))
         jwt_secret = str(config.get("jwt_secret") or "").strip() or None
         jwt_issuer = str(config.get("jwt_issuer") or "prilog-backend").strip()
+        e2ee_guard_enabled = bool(config.get("e2ee_guard_enabled", False))
 
         if not prilog_api_url:
             raise ValueError("prilog_api_url is required")
@@ -85,6 +92,7 @@ class PrilogMatrixConnectorModule:
             request_timeout_seconds=request_timeout_seconds,
             jwt_secret=jwt_secret,
             jwt_issuer=jwt_issuer,
+            e2ee_guard_enabled=e2ee_guard_enabled,
         )
 
     def _register_callbacks(self) -> None:
@@ -95,12 +103,19 @@ class PrilogMatrixConnectorModule:
             # heisst der Hook kann den Event nicht beeinflussen, was perfekt
             # ist: Audio ist schon im Chat zugestellt, Transkription ist ein
             # Bonus, der hinterher kommt.
-            self._api.register_third_party_rules_callbacks(
-                on_create_room=self.on_create_room,
-                on_new_event=self.on_new_event,
-            )
+            callbacks: dict[str, Any] = {
+                "on_create_room": self.on_create_room,
+                "on_new_event": self.on_new_event,
+            }
+            # E2EE-Guard (AP-3.4) nur registrieren, wenn explizit aktiviert —
+            # sonst laeuft check_event_allowed gar nicht erst mit (inert).
+            if self._config.e2ee_guard_enabled:
+                callbacks["check_event_allowed"] = self._e2ee_guard.check_event_allowed
+            self._api.register_third_party_rules_callbacks(**callbacks)
             logger.info(
-                "Registered on_create_room + on_new_event callbacks for Prilog Matrix Connector"
+                "Registered third_party_rules callbacks for Prilog Matrix Connector "
+                "(e2ee_guard=%s)",
+                self._config.e2ee_guard_enabled,
             )
         else:
             logger.warning(
@@ -229,6 +244,13 @@ class PrilogMatrixConnectorModule:
         request_content: dict[str, Any],
         is_requester_admin: bool,
     ) -> None:
+        # AP-3.4: Erstellung ist die Wahrheit — legt der Request einen
+        # Vertraulichen Chat an, Encryption + Marker autoritativ injizieren,
+        # BEVOR der Admin-Bypass greift (Prilog erstellt Raeume via Admin).
+        # Kein Raum kann so als vertraulich gelten und Klartext sein.
+        if self._config.e2ee_guard_enabled and apply_confidential_creation(request_content):
+            logger.info("E2EE-Guard: injected encryption+marker into confidential room creation")
+
         if self._config.allow_server_admin_bypass and is_requester_admin:
             logger.info("Allowing room creation for server admin due to allow_server_admin_bypass")
             return
@@ -325,9 +347,19 @@ class PrilogMatrixConnectorModule:
             if not isinstance(event_id, str):
                 return
 
-            # Bot-Sender ueberspringen — der Synapse-Admin schickt selbst keine
-            # Audios, aber sicher ist sicher.
-            if sender.startswith("@admin:") or sender.startswith("@bot:"):
+            # Bot-Sender ueberspringen — der Bot postet u. a. das Transkript
+            # selbst; nie dessen (etwaige) Audios transkribieren.
+            #
+            # Der Tenant-Admin (@admin:) wird BEWUSST NICHT mehr uebersprungen:
+            # der Operator testet Flurfunk regelmaessig als Admin, und das
+            # Backend whitelistet den Tenant-Admin ohnehin schon
+            # (transcribe.service `isSenderTenantAdmin` -> canUseTranscription-
+            # Check wird uebersprungen). Ihn hier vorab wegzuwerfen war die
+            # wiederkehrende Ursache fuer "Flurfunk geht nicht" (Attempt wurde
+            # nie angelegt, Diagnose-Tool blieb leer). Das Transkript selbst ist
+            # eine Text-Nachricht (org.prilog.transcript_text), kein m.audio ->
+            # kein Loop.
+            if sender.startswith("@bot:"):
                 return
 
             # tenant_key fuer das Backend — wir nehmen die statische Config aus
