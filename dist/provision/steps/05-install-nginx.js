@@ -76,8 +76,23 @@ server {
     # Prilog Web Client (SPA fallback)
     root /var/www/prilog-web-client;
     index index.html;
+
+    # Bundles tragen ihren Inhalts-Hash im Namen und aendern sich nie.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
+
+        # index.html nie ohne Rueckfrage aus dem Zwischenspeicher. Sonst zeigt
+        # der Browser eine alte index.html, die auf Bundles verweist, die der
+        # letzte Deploy geloescht hat -> weisse Seite bis zum Neuladen von Hand
+        # (gesehen 2026-08-28 auf /mailer).
+        location = /index.html {
+            add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        }
     }
 }
 `;

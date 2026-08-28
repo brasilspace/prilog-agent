@@ -355,8 +355,22 @@ async function writeTenantNginxConfig(slug: string, domain: string, synapsePort:
         proxy_read_timeout 86400s;
     }
 
+    # Die Bundles tragen ihren Inhalts-Hash im Namen und aendern sich nie —
+    # ein Jahr Zwischenspeicher ist richtig und spart jede Rueckfrage.
+    location /assets/ {
+        root /var/www/prilog-web-client;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
     location / {
         root /var/www/prilog-web-client;
+        # index.html NIE ohne Rueckfrage aus dem Zwischenspeicher nehmen.
+        # Ohne diese Zeile raet der Browser (heuristisches Caching), liefert
+        # eine alte index.html und verweist damit auf Bundles, die der letzte
+        # Deploy geloescht hat. Ergebnis: weisse Seite, die erst nach
+        # manuellem Neuladen verschwindet (gesehen 2026-08-28 auf /mailer).
+        add_header Cache-Control "no-cache" always;
         try_files $uri $uri/ /index.html;
     }
 }
